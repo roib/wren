@@ -237,6 +237,7 @@ function episodeRow(ep) {
   return h("li", { class: classes },
     h("button", { class: "ep-main", onclick: () => play(ep) },
       h("span", { class: "ep-date" },
+        isCurrent ? h("span", { class: "now" }, "Now playing · ") : null,
         [fmtDate(ep.upload_date), ep.mode === "video" ? "Video" : null].filter(Boolean).join(" · ")),
       h("span", { class: "ep-title" }, ep.title),
       h("span", { class: "ep-meta" },

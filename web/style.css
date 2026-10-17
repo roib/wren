@@ -5,7 +5,8 @@
   --muted: #6e6e76;
   --faint: #a5a5ad;
   --line: rgba(0, 0, 0, 0.07);
-  --accent: #e8622a;
+  --accent: #111113;
+  --on-accent: #ffffff;
   --ok: #2e9e6a;
   --glass: rgba(247, 247, 248, 0.82);
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
@@ -21,7 +22,8 @@
     --muted: #8e8e96;
     --faint: #55555c;
     --line: rgba(255, 255, 255, 0.07);
-    --accent: #ff7a3d;
+    --accent: #f2f2f3;
+    --on-accent: #0e0e10;
     --ok: #4cc38a;
     --glass: rgba(24, 24, 27, 0.82);
     --shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
@@ -155,14 +157,14 @@ main { margin-top: 18px; }
 .bar { width: 44px; height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
 .bar > span { display: block; height: 100%; background: var(--accent); }
 
-.episode.current .ep-title { color: var(--accent); }
 .episode.done .ep-title { color: var(--muted); font-weight: 500; }
 .episode.unavailable { opacity: 0.4; }
 
 .ep-actions { display: flex; flex-shrink: 0; margin-right: -8px; }
 .check.on { color: var(--ok); }
-.dl.on { color: var(--accent); }
-.dl.busy { color: var(--accent); }
+.dl.on { color: var(--fg); }
+.dl.busy { color: var(--fg); }
+.now { color: var(--fg); }
 .ring { transform: rotate(-90deg); }
 .ring-track { fill: none; stroke: var(--line); stroke-width: 2.4; }
 .ring-fill { fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; transition: stroke-dashoffset 0.2s; }
@@ -229,7 +231,7 @@ main { margin-top: 18px; }
 
 .primary {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-weight: 600;
   padding: 12px;
   border-radius: 10px;
