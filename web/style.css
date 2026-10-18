@@ -373,6 +373,7 @@ main { margin-top: 18px; }
 .row-btn { width: 100%; text-align: left; padding: 16px 0; color: var(--accent); font-weight: 600; }
 .row-btn:disabled { color: var(--faint); cursor: default; }
 .hint { color: var(--muted); font-size: 13px; margin: 10px 4px 0; line-height: 1.45; }
+.hint .link { background: none; border: 0; padding: 0; font: inherit; color: var(--fg); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 /* Settings tabs: pinned under the title while the subscription list scrolls. */
 .tabs-wrap {
   position: sticky;
@@ -519,6 +520,7 @@ main { margin-top: 18px; }
   bottom: calc(env(safe-area-inset-bottom) + 24px);
   transform: translate(-50%, 12px);
   max-width: calc(100% - 40px);
+  overflow-wrap: anywhere;
   background: var(--fg);
   color: var(--bg);
   font-size: 14px;
@@ -529,7 +531,7 @@ main { margin-top: 18px; }
   pointer-events: none;
   transition: opacity 0.2s, transform 0.2s;
   z-index: 30;
-  white-space: nowrap;
+  white-space: normal;
   overflow: hidden;
   text-overflow: ellipsis;
 }

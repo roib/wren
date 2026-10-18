@@ -639,11 +639,28 @@ function subscriptionRow(s) {
               onclick: () => downloadShowNow(s),
             }, icon("download"), busy ? "Downloading…" : "Download now"),
             h("button", {
+              class: "action subtle",
+              tabindex: open ? null : "-1",
+              onclick: () => copyFeed(`/feeds/show/${s.id}.xml`),
+            }, "Copy feed"),
+            h("button", {
               class: `action subtle${isConfirming ? " confirm" : ""}`,
               tabindex: open ? null : "-1",
               onclick: () => removeShow(s),
             }, isConfirming ? "Tap again to remove" : "Remove"))))));
 }
+
+// Podcast feed URLs, for following a show in a native podcast app.
+async function copyFeed(path) {
+  const url = new URL(path, location.href).href;
+  try {
+    await navigator.clipboard.writeText(url);
+    setStatus("Feed URL copied. In Apple Podcasts: Library → ⋯ → Follow a Show by URL.", 6000);
+  } catch {
+    setStatus(url, 10000); // clipboard unavailable: show it to copy by hand
+  }
+}
+$("copy-singles-feed").addEventListener("click", () => copyFeed("/feeds/singles.xml"));
 
 // Check one show and download its queue now, even outside the server's active hours.
 async function downloadShowNow(s) {

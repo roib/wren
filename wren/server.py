@@ -2,12 +2,12 @@ import logging
 import mimetypes
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import db, subscriptions, worker
-from .config import MEDIA_DIR, WEB_DIR, WORKER_ENABLED
+from . import db, podcast, subscriptions, worker
+from .config import BASE_URL, MEDIA_DIR, WEB_DIR, WORKER_ENABLED
 
 # Slim container images lack /etc/mime.types; without these, media is served as
 # application/octet-stream, which iOS Safari may refuse to play.
@@ -193,6 +193,43 @@ def queue():
                WHERE f.status = 'queued' ORDER BY f.rowid""")]
     jobs = [j for j in worker.list_jobs() if j["status"] in ("queued", "running")]
     return {"worker": background.status(), "jobs": jobs, "items": items}
+
+
+# ---- podcast feeds ------------------------------------------------------------------
+# RSS feeds of the library, for subscribing in a native podcast app (Apple
+# Podcasts, Audiobookshelf...), whose lock-screen controls iOS doesn't limit.
+
+def _base_url(request: Request) -> str:
+    if BASE_URL:
+        return BASE_URL
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("host", request.url.netloc)
+    return f"{proto}://{host}"
+
+
+def _feed_response(xml: str) -> Response:
+    return Response(xml, media_type="application/rss+xml; charset=utf-8")
+
+
+@app.get("/feeds/show/{show_id}.xml")
+def show_feed(show_id: int, request: Request):
+    show = subscriptions.get_show(show_id)
+    if not show:
+        raise HTTPException(404, "No such show")
+    eps = [ep for ep in db.list_episodes() if ep["show_id"] == show_id]
+    base = _base_url(request)
+    return _feed_response(podcast.render(
+        show["name"], f"{show['name']}, downloaded by Wren.", eps, base, f"{base}{request.url.path}"))
+
+
+@app.get("/feeds/singles.xml")
+def singles_feed(request: Request):
+    """Episodes added one at a time, plus those left from removed subscriptions."""
+    shows = {s["id"] for s in subscriptions.list_shows()}
+    eps = [ep for ep in db.list_episodes() if ep["show_id"] not in shows]
+    base = _base_url(request)
+    return _feed_response(podcast.render(
+        "Wren: single episodes", "Episodes added to Wren one at a time.", eps, base, f"{base}{request.url.path}"))
 
 
 # StaticFiles serves files via FileResponse, which handles HTTP Range requests

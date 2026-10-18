@@ -48,3 +48,7 @@ COOKIES_FILE = os.environ.get("WREN_COOKIES") or None
 
 # Subtitles for video episodes: comma-separated language codes ("" turns them off).
 SUBTITLE_LANGS = [l.strip() for l in os.environ.get("WREN_SUBTITLES", "en").split(",") if l.strip()]
+
+# Public base URL for links in podcast feeds (e.g. https://wren.example.com).
+# Unset, it's worked out from each request (Host + X-Forwarded-Proto).
+BASE_URL = os.environ.get("WREN_BASE_URL", "").rstrip("/")
