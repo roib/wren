@@ -64,8 +64,8 @@ async function serveMedia(request, url) {
   const cached = await cache.match(url.pathname);
 
   if (!cached) {
-    // Keep thumbnails around so the library looks right offline.
-    if (url.pathname.endsWith(".jpg")) {
+    // Keep thumbnails and subtitles around so they work offline too.
+    if (url.pathname.endsWith(".jpg") || url.pathname.endsWith(".vtt")) {
       try {
         const res = await fetch(request);
         if (res.ok) cache.put(url.pathname, res.clone());

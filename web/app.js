@@ -219,7 +219,7 @@ async function loadDownloaded() {
   const cache = await caches.open(MEDIA_CACHE);
   const keys = await cache.keys();
   downloaded = new Set(
-    keys.map((r) => new URL(r.url).pathname).filter((p) => !p.endsWith(".jpg"))
+    keys.map((r) => new URL(r.url).pathname).filter((p) => !p.endsWith(".jpg") && !p.endsWith(".vtt"))
   );
 }
 
@@ -762,6 +762,7 @@ async function download(ep) {
       headers: { "Content-Type": res.headers.get("Content-Type") || "application/octet-stream" },
     }));
     if (ep.thumb_url) await cache.add(ep.thumb_url).catch(() => {});
+    if (ep.subs_url) await cache.add(ep.subs_url).catch(() => {});
     downloaded.add(ep.media_url);
   } catch (e) {
     setStatus(`Download failed: ${e.message}`);
@@ -782,6 +783,7 @@ async function clearDownloads(eps) {
   for (const ep of eps) {
     if (current && key(current) === key(ep) && !media.paused) continue; // don't yank what's playing
     await cache.delete(ep.media_url);
+    if (ep.subs_url) await cache.delete(ep.subs_url);
     downloaded.delete(ep.media_url);
     n++;
   }
@@ -824,6 +826,8 @@ function play(ep) {
   $("sheet-art").src = ep.thumb_url ?? "";
   if (isVideo) videoEl.poster = ep.thumb_url ?? "";
   media.src = ep.media_url;
+  if (isVideo) setupSubtitles(ep);
+  else $("cc").hidden = true;
   media.playbackRate = Number(lsGet("speed")) || 1;
 
   const resumeAt = getPos(ep);
@@ -952,6 +956,34 @@ setInterval(() => {
   if (!current || current.mode !== "video" || !audioEl.src.endsWith(current.media_url)) return;
   audioEl.currentTime = videoEl.currentTime + 1;
 }, 10000);
+
+// ---- subtitles (video episodes) --------------------------------------------
+const subsOn = () => lsGet("subs") === "on";
+
+function setupSubtitles(ep) {
+  videoEl.querySelectorAll("track").forEach((t) => t.remove());
+  $("cc").hidden = !ep.subs_url;
+  if (!ep.subs_url) return;
+  const track = document.createElement("track");
+  track.kind = "subtitles";
+  track.srclang = "en";
+  track.label = "English";
+  track.src = ep.subs_url;
+  videoEl.append(track);
+  applySubtitles();
+}
+
+function applySubtitles() {
+  const on = subsOn();
+  for (const t of videoEl.textTracks) t.mode = on ? "showing" : "hidden";
+  $("cc").setAttribute("aria-pressed", String(on));
+  $("cc").setAttribute("aria-label", on ? "Hide subtitles" : "Show subtitles");
+}
+
+$("cc").addEventListener("click", () => {
+  lsSet("subs", subsOn() ? "off" : "on");
+  applySubtitles();
+});
 
 function openSheet() {
   const el = $("sheet");

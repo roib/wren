@@ -45,3 +45,6 @@ WORKER_ENABLED = os.environ.get("WREN_WORKER", "1") != "0"
 # Optional Netscape-format cookies file for yt-dlp, if YouTube starts asking
 # to "confirm you're not a bot".
 COOKIES_FILE = os.environ.get("WREN_COOKIES") or None
+
+# Subtitles for video episodes: comma-separated language codes ("" turns them off).
+SUBTITLE_LANGS = [l.strip() for l in os.environ.get("WREN_SUBTITLES", "en").split(",") if l.strip()]

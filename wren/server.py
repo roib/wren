@@ -14,6 +14,7 @@ from .config import MEDIA_DIR, WEB_DIR, WORKER_ENABLED
 mimetypes.add_type("audio/mp4", ".m4a")
 mimetypes.add_type("video/mp4", ".mp4")
 mimetypes.add_type("image/jpeg", ".jpg")
+mimetypes.add_type("text/vtt", ".vtt")
 mimetypes.add_type("application/manifest+json", ".webmanifest")
 
 log = logging.getLogger("wren")
@@ -57,6 +58,7 @@ def library():
     for ep in episodes:
         ep["media_url"] = f"/media/{ep['file']}"
         ep["thumb_url"] = f"/media/{ep['thumb']}" if ep["thumb"] else None
+        ep["subs_url"] = f"/media/{ep['subtitles']}" if ep.get("subtitles") else None
     return episodes
 
 

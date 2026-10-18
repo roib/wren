@@ -330,13 +330,15 @@ def _apply_retention(show: dict) -> int:
         return 0
     with db.connect() as conn:
         rows = conn.execute(
-            """SELECT video_id, mode, file, thumb FROM episodes WHERE show_id = ?
+            """SELECT video_id, mode, file, thumb, subtitles FROM episodes WHERE show_id = ?
                ORDER BY upload_date DESC, added_at DESC""", (show["id"],)).fetchall()
         old = rows[show["keep_last"]:]
         for ep in old:
             conn.execute("DELETE FROM episodes WHERE video_id = ? AND mode = ?",
                          (ep["video_id"], ep["mode"]))
             (MEDIA_DIR / ep["file"]).unlink(missing_ok=True)
+            if ep["subtitles"]:
+                (MEDIA_DIR / ep["subtitles"]).unlink(missing_ok=True)
             # The thumbnail may be shared with the other format of the same video.
             if ep["thumb"] and not conn.execute(
                     "SELECT 1 FROM episodes WHERE thumb = ?", (ep["thumb"],)).fetchone():

@@ -622,10 +622,8 @@ body.has-player #toast { bottom: calc(env(safe-area-inset-bottom) + 96px); }
 #media { transition: opacity 0.25s; }
 #media.stale { opacity: 0; transition: none; }
 #sheet.is-video .video-wrap { display: block; }
+.video-controls { position: absolute; right: 8px; bottom: 8px; display: flex; gap: 8px; }
 .fs-btn {
-  position: absolute;
-  right: 8px;
-  bottom: 8px;
   width: 36px;
   height: 36px;
   border-radius: 999px;
@@ -638,6 +636,9 @@ body.has-player #toast { bottom: calc(env(safe-area-inset-bottom) + 96px); }
 }
 .fs-btn .ic { width: 18px; height: 18px; }
 .fs-btn:active { opacity: 0.7; }
+.fs-btn.cc { font-size: 12px; font-weight: 700; letter-spacing: 0.02em; }
+.fs-btn.cc[aria-pressed="true"] { background: #fff; color: #000; }
+video::cue { background: rgba(0, 0, 0, 0.65); color: #fff; font-size: 0.85em; }
 #sheet.is-video #sheet-art { display: none; }
 
 .sheet-meta { margin-bottom: 16px; flex-shrink: 0; }

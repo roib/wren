@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS episodes (
     thumb       TEXT,            -- path relative to MEDIA_DIR
     added_at    INTEGER NOT NULL,
     show_id     INTEGER,         -- subscription it came from; NULL for manual adds
+    subtitles   TEXT,            -- WebVTT file relative to MEDIA_DIR (video episodes)
     PRIMARY KEY (video_id, mode)
 );
 
@@ -79,6 +80,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(episodes)")}
     if "show_id" not in cols:
         conn.execute("ALTER TABLE episodes ADD COLUMN show_id INTEGER")
+    if "subtitles" not in cols:
+        conn.execute("ALTER TABLE episodes ADD COLUMN subtitles TEXT")
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(feed_items)")}
     if "next_try" not in cols:
         conn.execute("ALTER TABLE feed_items ADD COLUMN next_try INTEGER NOT NULL DEFAULT 0")
