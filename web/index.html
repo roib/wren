@@ -19,126 +19,32 @@
   <nav class="nav" id="nav">
     <a id="back" href="#/" hidden><span data-icon="chevronLeft"></span>Shows</a>
     <span class="nav-title" id="nav-title" aria-hidden="true"></span>
-    <a id="settings-link" class="icon-btn" href="#/settings" aria-label="Settings" data-icon="settings"></a>
+    <div class="nav-actions" id="nav-actions">
+      <a id="status-link" class="icon-btn" href="#/status" aria-label="Status" data-icon="pulse"></a>
+      <a id="add-link" class="icon-btn" href="#/add" aria-label="Add a show or episode" data-icon="plus"></a>
+    </div>
   </nav>
   <div id="scroller">
-  <div class="scroll-inner">
-  <header class="top">
-    <h1 id="view-title">Shows</h1>
-    <p id="view-sub"></p>
-  </header>
-
-  <main>
-    <ul id="list"></ul>
-
-    <section id="settings" hidden>
-      <div class="tabs-wrap">
-        <nav class="tabs" aria-label="Settings sections">
-          <a href="#/settings" data-tab="subs">Subscriptions</a>
-          <a href="#/settings/add" data-tab="add">Add episode</a>
-          <a href="#/settings/downloads" data-tab="downloads">Downloads</a>
-        </nav>
-      </div>
-
-      <div class="tab-panel" data-panel="subs">
-        <div class="subs-toolbar">
-          <span id="sub-count"></span>
-          <input id="sub-filter" type="search" placeholder="Filter subscriptions" autocomplete="off" hidden>
-          <button id="sub-add-toggle" class="pill" type="button" aria-expanded="false" hidden>+ Add</button>
-        </div>
-        <form id="sub-form" class="card" hidden>
-          <input id="sub-url" type="url" placeholder="YouTube channel or playlist URL" required autocomplete="off">
-          <div class="segmented" role="radiogroup" aria-label="Format">
-            <label><input type="radio" name="sub-mode" value="audio" checked><span>Audio</span></label>
-            <label><input type="radio" name="sub-mode" value="video"><span>Video</span></label>
-          </div>
-          <button type="submit" class="primary" id="sub-submit">Subscribe</button>
-        </form>
-        <p class="hint" id="sub-empty" hidden>Subscribe to a YouTube channel or playlist and its new episodes download automatically.</p>
-        <div class="status-bar" id="sub-statusbar" hidden>
-          <span id="sub-status"></span>
-          <button id="download-all" class="pill" type="button">Download all</button>
-        </div>
-        <div class="card list-card" id="sub-list" hidden></div>
-      </div>
-
-      <div class="tab-panel" data-panel="add" hidden>
-        <form id="add-form" class="card">
-          <input id="add-url" type="url" placeholder="Paste a video URL" required autocomplete="off">
-          <div class="segmented" role="radiogroup" aria-label="Format">
-            <label><input type="radio" name="mode" value="audio" checked><span>Audio</span></label>
-            <label><input type="radio" name="mode" value="video"><span>Video</span></label>
-          </div>
-          <button type="submit" class="primary">Add</button>
-        </form>
-        <p class="hint">Downloads a single video into your library without subscribing to its channel.</p>
-        <p class="hint">To play these in a podcast app, <button id="copy-singles-feed" class="link" type="button">copy the single-episodes feed</button>. Each subscription has its own feed under Subscriptions.</p>
-      </div>
-
-      <div class="tab-panel" data-panel="downloads" hidden>
-        <div class="card list-card">
-          <div class="kv"><span>Saved on this device</span><span id="dl-count">—</span></div>
-          <div class="kv"><span>Storage used</span><span id="dl-usage">—</span></div>
-          <div id="clear-area"></div>
-        </div>
-        <p class="hint" id="dl-hint">Clearing removes only the copies saved on this device. Episodes stay in your library and can be downloaded again.</p>
-      </div>
-    </section>
-  </main>
-  </div>
+    <div class="scroll-inner">
+      <header class="top">
+        <h1 id="view-title">Shows</h1>
+        <p id="view-sub" hidden></p>
+      </header>
+      <main id="view"></main>
+    </div>
   </div>
 
   <div id="toast" role="status" aria-live="polite"></div>
 
-  <div id="mini" hidden>
-    <div class="mini-progress"><div id="mini-bar"></div></div>
-    <button id="mini-open" class="mini-main" aria-label="Open player">
-      <img id="mini-thumb" alt="">
-      <span class="mini-text">
-        <span id="mini-title"></span>
-        <span id="mini-sub"></span>
-      </span>
-    </button>
-    <button id="mini-play" class="icon-btn" aria-label="Play"></button>
-  </div>
-
-  <section id="sheet" aria-label="Now playing" aria-hidden="true">
+  <!-- Test player: the phone's own controls, in a sheet that swipes down to close. -->
+  <section id="sheet" aria-label="Test playback" aria-hidden="true">
     <div class="sheet-inner">
       <button id="sheet-close" class="icon-btn" aria-label="Close player" data-icon="chevronDown"></button>
-      <div class="art">
-        <img id="sheet-art" alt="">
-        <div class="video-wrap" id="video-wrap">
-          <video id="media" playsinline preload="metadata"></video>
-          <div id="seek-hint" class="seek-hint" aria-hidden="true"></div>
-          <div id="video-overlay" class="video-overlay">
-            <button id="ov-play" class="ov-play" aria-label="Play"></button>
-            <div class="ov-corner">
-              <button id="cc" class="ovbtn cc" aria-label="Subtitles" aria-pressed="false" hidden>CC</button>
-              <button id="fullscreen" class="ovbtn" aria-label="Full screen" data-icon="expand"></button>
-            </div>
-          </div>
-        </div>
-        <audio id="audio" preload="metadata"></audio>
-      </div>
+      <div class="player-wrap" id="player-wrap"></div>
       <div class="sheet-meta">
         <div id="sheet-title"></div>
-        <div id="sheet-channel"></div>
+        <div id="sheet-sub"></div>
       </div>
-      <div id="seek" class="scrubber" role="slider" tabindex="0" aria-label="Seek"
-           aria-valuemin="0" aria-valuemax="0" aria-valuenow="0">
-        <div class="scrub-track"><div class="scrub-fill"></div></div>
-        <div class="scrub-thumb"></div>
-      </div>
-      <div class="times"><span id="cur">0:00</span><span id="remain">-0:00</span></div>
-      <div class="transport">
-        <button id="speed" class="chip" aria-label="Playback speed">1×</button>
-        <button id="skip-back" class="icon-btn lg" aria-label="Back 15 seconds" data-icon="back"></button>
-        <button id="play" class="play-btn" aria-label="Play"></button>
-        <button id="skip-fwd" class="icon-btn lg" aria-label="Forward 30 seconds" data-icon="fwd"></button>
-        <button id="sleep" class="chip sleep" aria-label="Sleep timer: off" aria-haspopup="menu" aria-expanded="false"></button>
-      </div>
-      <div id="sleep-backdrop" hidden></div>
-      <div id="sleep-menu" class="popover" role="menu" aria-label="Sleep timer" hidden></div>
     </div>
   </section>
 

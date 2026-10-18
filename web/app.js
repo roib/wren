@@ -1,64 +1,25 @@
+// Wren: manage the shows the server downloads. Playback happens in Apple
+// Podcasts (or any podcast app) through each show's feed; this app subscribes,
+// shows what's downloaded and what's happening, and can test-play an episode.
+
 const $ = (id) => document.getElementById(id);
-// Audio episodes play through <audio>, which iOS keeps playing in the background;
-// video episodes use <video>. `media` is whichever one the current episode uses.
-const videoEl = $("media");
-const audioEl = $("audio");
-let media = audioEl;
-
-// Whether playback is *meant* to be running: set by the user (and the sleep
-// timer), not by iOS pausing video when the app goes to the background.
-let wantPlaying = false;
-
-// Send a line to the server log (podman logs wren | grep client). sendBeacon
-// still gets through while the app is being backgrounded.
-function clientLog(msg) {
-  try {
-    navigator.sendBeacon("/api/client-log",
-      new Blob([JSON.stringify({ msg })], { type: "application/json" }));
-  } catch {}
-}
-
-// Listen on both elements, but only react to the one that's active, so a
-// switch between them can't save or show the wrong episode's state.
-function onMedia(type, handler) {
-  for (const el of [audioEl, videoEl]) {
-    el.addEventListener(type, (e) => { if (e.target === media) handler(e); });
-  }
-}
-const SPEEDS = [1, 1.25, 1.5, 1.75, 2];
-const MEDIA_CACHE = "wren-media-v1"; // must match sw.js
-const DONE_AT = 0.97; // fraction of duration that counts as "played"
-const RING = 2 * Math.PI * 8; // circumference of the download progress ring
-
-// Cache API + service workers only exist on HTTPS (or localhost).
-const canOffline = "caches" in window && "serviceWorker" in navigator;
-
-let episodes = [];
-let pending = []; // episodes on their way from subscriptions (from /api/pending)
-let pendingWorker = null; // the server worker's status, to say when they'll arrive
-let downloaded = new Set(); // media_url paths stored in MEDIA_CACHE
-const downloading = new Map(); // episode key -> progress 0..1
-const confirmingRemoval = new Set(); // episode keys showing "Remove?" after a first tap
-let current = null;
 
 // ---- icons ----------------------------------------------------------------
 
 const ICONS = {
   play: '<path d="M8 5.6v12.8a1 1 0 0 0 1.5.86l10.2-6.4a1 1 0 0 0 0-1.72L9.5 4.74A1 1 0 0 0 8 5.6z" fill="currentColor" stroke="none"/>',
-  pause: '<rect x="6.5" y="5" width="3.6" height="14" rx="1" fill="currentColor" stroke="none"/><rect x="13.9" y="5" width="3.6" height="14" rx="1" fill="currentColor" stroke="none"/>',
-  back: '<path d="M4.6 12a7.4 7.4 0 1 0 2.2-5.25"/><path d="M4.6 4.4v3.9h3.9"/><text x="12.4" y="15.1" font-size="6.6" font-weight="700" text-anchor="middle" fill="currentColor" stroke="none" font-family="-apple-system,system-ui,sans-serif">15</text>',
-  fwd: '<path d="M19.4 12a7.4 7.4 0 1 1-2.2-5.25"/><path d="M19.4 4.4v3.9h-3.9"/><text x="11.6" y="15.1" font-size="6.6" font-weight="700" text-anchor="middle" fill="currentColor" stroke="none" font-family="-apple-system,system-ui,sans-serif">30</text>',
   download: '<path d="M12 4.5v10.5M7.5 10.5 12 15l4.5-4.5M5.5 19.5h13"/>',
-  downloaded: '<circle cx="12" cy="12" r="9" fill="currentColor" stroke="none"/><path d="M12 7.5v8M8.8 12.6 12 15.8l3.2-3.2" stroke="var(--bg)"/>',
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
-  settings: '<path d="M4 8h9M17 8h3M4 16h3M11 16h9"/><circle cx="15" cy="8" r="2"/><circle cx="9" cy="16" r="2"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  pulse: '<path d="M3 12h4l2.5-6 5 12 2.5-6h4"/>',
+  podcast: '<circle cx="12" cy="10.5" r="2.2"/><path d="M12 12.7V20"/><path d="M8.3 14.6a5.2 5.2 0 1 1 7.4 0"/><path d="M5.7 17.3a8.8 8.8 0 1 1 12.6 0"/>',
+  copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2.2"/><path d="M15.5 8.5V6.7a2.2 2.2 0 0 0-2.2-2.2H6.7a2.2 2.2 0 0 0-2.2 2.2v6.6a2.2 2.2 0 0 0 2.2 2.2h1.8"/>',
+  external: '<path d="M14 5h5v5M19 5l-8 8"/><path d="M18 14v4a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18V7.5A1.5 1.5 0 0 1 5.5 6H10"/>',
+  refresh: '<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4h-4"/>',
+  alert: '<path d="M12 4.2 3 19.5h18z"/><path d="M12 10v4.2M12 17.2v.1"/>',
   chevronLeft: '<path d="M14.5 5.5 8 12l6.5 6.5"/>',
   chevronRight: '<path d="M9.5 5.5 16 12l-6.5 6.5"/>',
   chevronDown: '<path d="M5.5 9 12 15.5 18.5 9"/>',
-  refresh: '<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4h-4"/>',
-  moon: '<path d="M19.5 14.6A7.8 7.8 0 1 1 9.4 4.5a6.3 6.3 0 0 0 10.1 10.1z"/>',
-  expand: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
-  moonFill: '<path d="M19.5 14.6A7.8 7.8 0 1 1 9.4 4.5a6.3 6.3 0 0 0 10.1 10.1z" fill="currentColor"/>',
 };
 
 function svg(name) {
@@ -72,16 +33,6 @@ function icon(name) {
   return span;
 }
 
-function ring(progress) {
-  const span = document.createElement("span");
-  span.className = "ic-wrap";
-  span.innerHTML = `<svg class="ic ring" viewBox="0 0 24 24" aria-hidden="true">
-    <circle cx="12" cy="12" r="8" class="ring-track"/>
-    <circle cx="12" cy="12" r="8" class="ring-fill" stroke-dasharray="${RING}" stroke-dashoffset="${RING * (1 - progress)}"/>
-  </svg>`;
-  return span;
-}
-
 // ---- helpers --------------------------------------------------------------
 
 function h(tag, props = {}, ...children) {
@@ -89,381 +40,36 @@ function h(tag, props = {}, ...children) {
   for (const [k, v] of Object.entries(props)) {
     if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
     else if (k === "class") el.className = v;
-    else if (v !== null && v !== undefined && v !== false) el.setAttribute(k, v);
+    else if (k === "value") el.value = v;
+    else if (v !== null && v !== undefined && v !== false) el.setAttribute(k, v === true ? "" : v);
   }
-  el.append(...children.filter((c) => c !== null && c !== undefined && c !== false));
+  el.append(...children.flat().filter((c) => c !== null && c !== undefined && c !== false));
   return el;
 }
 
-function fmt(sec) {
-  if (!Number.isFinite(sec)) return "0:00";
-  sec = Math.max(0, Math.floor(sec));
-  const hh = Math.floor(sec / 3600);
-  const mm = Math.floor((sec % 3600) / 60);
-  const ss = String(sec % 60).padStart(2, "0");
-  return hh ? `${hh}:${String(mm).padStart(2, "0")}:${ss}` : `${mm}:${ss}`;
-}
-
-function fmtMinutes(sec) {
+function fmtDuration(sec) {
+  if (!sec) return null;
   const m = Math.max(1, Math.round(sec / 60));
   return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
 }
 
 function fmtDate(yyyymmdd) {
-  if (!yyyymmdd) return "";
+  if (!yyyymmdd) return null;
   const d = new Date(`${yyyymmdd.slice(0, 4)}-${yyyymmdd.slice(4, 6)}-${yyyymmdd.slice(6, 8)}T00:00`);
   const sameYear = d.getFullYear() === new Date().getFullYear();
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric", ...(sameYear ? {} : { year: "numeric" }) });
 }
 
 function fmtBytes(n) {
-  if (n > 1e9) return `${(n / 1e9).toFixed(1)} GB`;
-  return `${Math.round(n / 1e6)} MB`;
-}
-
-const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
-
-let toastTimer;
-function setStatus(text, ms = 3500) {
-  const t = $("toast");
-  t.textContent = text;
-  t.classList.toggle("show", !!text);
-  clearTimeout(toastTimer);
-  if (text && ms) toastTimer = setTimeout(() => t.classList.remove("show"), ms);
-}
-
-// ---- per-episode state (localStorage) ---------------------------------------
-
-const key = (ep) => `${ep.video_id}:${ep.mode}`;
-
-function lsGet(k) {
-  try { return localStorage.getItem(k); } catch { return null; }
-}
-function lsSet(k, v) {
-  try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {}
-}
-
-const getPos = (ep) => Number(lsGet(`pos:${key(ep)}`)) || 0;
-const setPos = (ep, t) => lsSet(`pos:${key(ep)}`, t > 0 ? String(Math.floor(t)) : null);
-const isDone = (ep) => lsGet(`done:${key(ep)}`) === "1";
-
-function setDone(ep, done) {
-  lsSet(`done:${key(ep)}`, done ? "1" : null);
-  setPos(ep, 0);
-}
-
-// "New" = arrived since you last opened that show. When a show page opens we
-// remember the previous visit time for as long as you stay on it, so the
-// markers don't vanish the moment you look at them.
-const visitSnapshot = new Map(); // show name -> previous visit time
-const seenKey = (name) => `seen:${name}`;
-
-function seenSince() {
-  // Before the first visit to a show, count from when this device first ran
-  // the app, so an existing library doesn't all show up as new.
-  let t = Number(lsGet("seenSince"));
-  if (!t) {
-    t = Math.floor(Date.now() / 1000);
-    lsSet("seenSince", String(t));
-  }
-  return t;
-}
-
-function seenAt(name) {
-  if (visitSnapshot.has(name)) return visitSnapshot.get(name);
-  return Number(lsGet(seenKey(name))) || seenSince();
-}
-
-const isNew = (ep, showName) => !isDone(ep) && ep.added_at > seenAt(showName);
-
-function markVisited(name) {
-  if (visitSnapshot.has(name)) return;
-  visitSnapshot.set(name, seenAt(name));
-  lsSet(seenKey(name), String(Math.floor(Date.now() / 1000)));
-}
-
-// ---- data -----------------------------------------------------------------
-
-async function loadLibrary(quiet = false) {
-  try {
-    const [res, pend] = await Promise.all([fetch("/api/library"), fetch("/api/pending")]);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    episodes = await res.json();
-    lsSet("library", JSON.stringify(episodes)); // fallback for offline launches
-    const p = pend.ok ? await pend.json() : { items: [], worker: null };
-    pending = p.items;
-    pendingWorker = p.worker;
-  } catch {
-    try { episodes = JSON.parse(lsGet("library")) || []; } catch { episodes = []; }
-    pending = [];
-    if (!quiet) setStatus("Offline — downloaded episodes still play", 5000);
-  }
-  await loadDownloaded();
-  render();
-  scheduleLibraryRefresh();
-}
-
-// Refresh the library every minute, or every 15 seconds while episodes are on
-// their way, so you see them arrive.
-let libraryTimer = null;
-function scheduleLibraryRefresh() {
-  clearTimeout(libraryTimer);
-  libraryTimer = setTimeout(() => {
-    if (document.visibilityState === "visible") loadLibrary(true);
-    else scheduleLibraryRefresh();
-  }, pending.length ? 15000 : 60000);
-}
-
-async function loadDownloaded() {
-  if (!canOffline) return;
-  const cache = await caches.open(MEDIA_CACHE);
-  const keys = await cache.keys();
-  downloaded = new Set(
-    keys.map((r) => new URL(r.url).pathname).filter((p) => !p.endsWith(".jpg") && !p.endsWith(".vtt"))
-  );
-}
-
-function groupShows(eps, coming = []) {
-  const shows = new Map();
-  const get = (name) => {
-    if (!shows.has(name)) shows.set(name, { name, episodes: [], pending: [] });
-    return shows.get(name);
-  };
-  for (const ep of eps) get(ep.show || ep.channel || "Unknown").episodes.push(ep);
-  for (const item of coming) get(item.show).pending.push(item);
-
-  const newest = (ep) => `${ep.upload_date || ""}${String(ep.added_at).padStart(12, "0")}`;
-  for (const show of shows.values()) {
-    show.episodes.sort((a, b) => newest(b).localeCompare(newest(a)));
-    show.pending.reverse(); // newest first, like the episodes
-  }
-  // Shows you can play come first (most recent episode first); shows with
-  // nothing downloaded yet follow, in name order.
-  return [...shows.values()].sort((a, b) => {
-    if (!a.episodes.length || !b.episodes.length) {
-      return (b.episodes.length > 0) - (a.episodes.length > 0) || a.name.localeCompare(b.name);
-    }
-    return newest(b.episodes[0]).localeCompare(newest(a.episodes[0]));
-  });
+  if (!n) return null;
+  if (n >= 1e12) return `${(n / 1e12).toFixed(1)} TB`;
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)} GB`;
+  return `${Math.max(1, Math.round(n / 1e6))} MB`;
 }
 
 function fmtClock(ts) {
   return new Date(ts * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
-
-// What's happening to an episode that hasn't arrived yet.
-function pendingStatus(item) {
-  const w = pendingWorker;
-  if (item.state === "downloading") return "Downloading…";
-  if (item.state === "premiere") return "Premieres soon";
-  if (item.state === "retrying") {
-    return /not a bot|Sign in to confirm|429|Too Many Requests/i.test(item.error)
-      ? "Retrying · YouTube is blocking downloads" : "Retrying · download failed";
-  }
-  if (w?.paused_until) return `Queued · paused until ${fmtClock(w.paused_until)}`;
-  const forced = w && (w.override_shows?.includes(item.show_id) || (w.override && !w.override_shows?.length));
-  if (w && !w.active_now && !forced) return `Queued · downloads at ${fmtClock(w.resume_at)}`;
-  return "Queued";
-}
-
-// ---- rendering --------------------------------------------------------------
-
-const onSettings = () => location.hash.startsWith("#/settings");
-
-function settingsTab() {
-  if (location.hash === "#/settings/add") return "add";
-  if (location.hash === "#/settings/downloads") return "downloads";
-  return "subs";
-}
-
-function currentShow() {
-  const m = location.hash.match(/^#\/show\/(.+)$/);
-  return m ? decodeURIComponent(m[1]) : null;
-}
-
-function render() {
-  const inSettings = onSettings();
-  const showName = currentShow();
-  const shows = groupShows(episodes, pending);
-  const show = showName && shows.find((s) => s.name === showName);
-
-  $("back").hidden = !(show || inSettings);
-  $("settings-link").hidden = !!(show || inSettings);
-  $("view-title").textContent = inSettings ? "Settings" : show ? show.name : "Shows";
-  $("nav-title").textContent = $("view-title").textContent;
-  $("list").hidden = inSettings;
-  $("settings").hidden = !inSettings;
-
-  let sub = "";
-  if (show) {
-    const unplayed = show.episodes.filter((ep) => !isDone(ep)).length;
-    sub = [
-      show.episodes.length ? plural(show.episodes.length, "episode") : null,
-      unplayed ? `${unplayed} unplayed` : null,
-      show.pending.length ? `${show.pending.length} coming` : null,
-    ].filter(Boolean).join(" · ");
-  }
-  $("view-sub").textContent = sub;
-  $("view-sub").hidden = !sub;
-
-  if (inSettings) {
-    renderSettings();
-    return;
-  }
-  if (show) markVisited(show.name);
-
-  const items = show
-    ? [...show.pending.map(pendingRow), ...show.episodes.map((ep) => episodeRow(ep, show.name))]
-    : shows.map(showRow);
-  if (!items.length) {
-    items.push(h("li", { class: "empty" },
-      h("p", {}, "No episodes yet."),
-      h("a", { href: "#/settings" }, "Add one in Settings")));
-  }
-  $("list").className = show ? "episodes" : "shows";
-  $("list").replaceChildren(...items);
-}
-
-function showRow(show) {
-  const unplayed = show.episodes.filter((ep) => !isDone(ep)).length;
-  const fresh = show.episodes.filter((ep) => isNew(ep, show.name)).length;
-  const coming = show.pending.length;
-  const art = show.episodes.find((ep) => ep.thumb_url)?.thumb_url ?? show.pending[0]?.thumb_url;
-  let sub = plural(show.episodes.length, "episode");
-  if (!show.episodes.length) sub = `${plural(coming, "episode")} coming`;
-  else if (fresh) sub = `${fresh} new`;
-  else if (unplayed) sub = `${unplayed} unplayed`;
-  if (show.episodes.length && coming) sub += ` · ${coming} coming`;
-
-  return h("li", {},
-    h("a", { class: `show${show.episodes.length ? "" : " coming"}`, href: `#/show/${encodeURIComponent(show.name)}` },
-      h("img", { src: art ?? "", alt: "", loading: "lazy" }),
-      h("span", { class: "show-text" },
-        h("span", { class: "show-name" }, show.name),
-        h("span", { class: "show-sub" }, fresh ? h("span", { class: "dot" }) : null, sub)),
-      h("span", { class: "chev" }, icon("chevronRight"))));
-}
-
-function pendingRow(item) {
-  const downloading = item.state === "downloading";
-  return h("li", { class: `episode pending${downloading ? " downloading" : ""}`, "aria-disabled": "true" },
-    h("div", { class: "ep-main" },
-      h("span", { class: "ep-date" },
-        downloading ? h("span", { class: "spinner", "aria-hidden": "true" }) : null,
-        pendingStatus(item)),
-      h("span", { class: "ep-title" }, item.title),
-      h("span", { class: "ep-meta" }, item.duration ? fmtMinutes(item.duration) : "")));
-}
-
-function episodeRow(ep, showName) {
-  const k = key(ep);
-  const done = isDone(ep);
-  const pos = getPos(ep);
-  const isOffline = downloaded.has(ep.media_url);
-  const unavailable = !navigator.onLine && !isOffline;
-  const isCurrent = current && key(current) === k;
-  const pct = !done && pos && ep.duration ? Math.min(100, (pos / ep.duration) * 100) : 0;
-
-  let meta;
-  if (done) meta = "Played";
-  else if (pct) meta = `${fmtMinutes(ep.duration - pos)} left`;
-  else meta = ep.duration ? fmtMinutes(ep.duration) : "";
-
-  const classes = ["episode", done && "done", unavailable && "unavailable", isCurrent && "current"]
-    .filter(Boolean).join(" ");
-
-  return h("li", { class: classes },
-    h("button", { class: "ep-main", onclick: () => play(ep) },
-      h("span", { class: "ep-date" },
-        isCurrent ? h("span", { class: "now" }, "Now playing · ") : null,
-        !isCurrent && isNew(ep, showName) ? h("span", { class: "new" }, "New · ") : null,
-        [fmtDate(ep.upload_date), ep.mode === "video" ? "Video" : null].filter(Boolean).join(" · ")),
-      h("span", { class: "ep-title" }, ep.title),
-      h("span", { class: "ep-meta" },
-        pct ? h("span", { class: "bar" }, h("span", { style: `width:${pct}%` })) : null,
-        meta)),
-    h("span", { class: "ep-actions" },
-      canOffline ? downloadButton(ep) : null,
-      h("button", {
-        class: `icon-btn sm check${done ? " on" : ""}`,
-        "aria-label": done ? "Mark as unplayed" : "Mark as played",
-        onclick: () => { setDone(ep, !done); render(); },
-      }, icon("check"))));
-}
-
-function downloadButton(ep) {
-  const k = key(ep);
-  if (downloading.has(k)) {
-    return h("button", { class: "icon-btn sm dl busy", "data-dl": k, "aria-label": "Downloading", disabled: true },
-      ring(downloading.get(k)));
-  }
-  if (downloaded.has(ep.media_url)) {
-    // Two taps to remove the copy on this device: the first asks "Remove?".
-    if (confirmingRemoval.has(k)) {
-      return h("button", {
-        class: "remove-confirm", "aria-label": "Tap again to remove the download from this device",
-        onclick: () => {
-          confirmingRemoval.delete(k);
-          removeDownload(ep);
-        },
-      }, "Remove?");
-    }
-    return h("button", {
-      class: "icon-btn sm dl on", "aria-label": "Downloaded. Tap to remove from this device",
-      onclick: () => {
-        confirmingRemoval.add(k);
-        render();
-        setTimeout(() => { if (confirmingRemoval.delete(k)) render(); }, 3000);
-      },
-    }, icon("downloaded"));
-  }
-  return h("button", {
-    class: "icon-btn sm dl", "aria-label": "Download for offline",
-    onclick: () => download(ep),
-  }, icon("download"));
-}
-
-function renderSettings() {
-  const tab = settingsTab();
-  document.querySelectorAll(".tabs a").forEach((a) => {
-    const active = a.dataset.tab === tab;
-    a.classList.toggle("active", active);
-    a.setAttribute("aria-current", active ? "page" : "false");
-  });
-  document.querySelectorAll(".tab-panel").forEach((panel) => {
-    panel.hidden = panel.dataset.panel !== tab;
-  });
-  renderSubscriptions();
-  if (!canOffline) {
-    $("dl-count").textContent = "Unavailable";
-    $("dl-usage").textContent = "—";
-    $("clear-area").replaceChildren();
-    $("dl-hint").textContent = "Offline downloads need HTTPS, e.g. via tailscale serve.";
-    return;
-  }
-  const clearable = episodes.filter((ep) => isDone(ep) && downloaded.has(ep.media_url));
-  $("dl-count").textContent = plural(downloaded.size, "episode");
-  $("clear-area").replaceChildren(
-    h("button", {
-      class: "row-btn",
-      disabled: !clearable.length,
-      onclick: () => clearDownloads(clearable),
-    }, clearable.length
-      ? `Clear ${plural(clearable.length, "played download")}`
-      : "No played downloads to clear"));
-  navigator.storage?.estimate?.().then(({ usage }) => {
-    $("dl-usage").textContent = fmtBytes(usage);
-  });
-}
-
-// ---- subscriptions -----------------------------------------------------------
-
-let subs = []; // from /api/shows; null when the server can't be reached
-let queueInfo = null; // from /api/queue
-let subsTimer = null;
-const confirming = new Set(); // show ids waiting for a second tap on Remove
-let expanded = null; // id of the subscription row that's open, showing its actions
-let showSubForm = false; // the subscribe form, behind "+ Add" once you have subscriptions
 
 function ago(ts) {
   if (!ts) return "never";
@@ -480,596 +86,741 @@ function until(ts) {
   return m < 60 ? `in ${m} min` : `in ${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
-async function loadSubscriptions() {
-  try {
-    const [s, q] = await Promise.all([fetch("/api/shows"), fetch("/api/queue")]);
-    if (!s.ok || !q.ok) throw new Error();
-    subs = await s.json();
-    queueInfo = await q.json();
-  } catch {
-    subs = null;
-    queueInfo = null;
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+const join = (...parts) => parts.filter(Boolean).join(" · ");
+
+let toastTimer;
+function toast(text, ms = 3500) {
+  const t = $("toast");
+  t.textContent = text;
+  t.classList.toggle("show", !!text);
+  clearTimeout(toastTimer);
+  if (text && ms) toastTimer = setTimeout(() => t.classList.remove("show"), ms);
+}
+
+// fetch JSON; throws an Error carrying the server's message.
+async function api(path, { method = "GET", body } = {}) {
+  const res = await fetch(path, {
+    method,
+    headers: body ? { "Content-Type": "application/json" } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try { msg = (await res.json()).detail || msg; } catch {}
+    throw new Error(msg);
   }
-  renderSubscriptions();
-  scheduleSubscriptionsRefresh();
-}
-
-function dueCount() {
-  if (!queueInfo) return 0;
-  const now = Date.now() / 1000;
-  return queueInfo.jobs.length + queueInfo.items.filter((i) => i.next_try <= now + 5).length;
-}
-
-// Poll quickly while the server is busy so progress shows up; slowly otherwise.
-function scheduleSubscriptionsRefresh() {
-  clearTimeout(subsTimer);
-  if (!onSettings()) return;
-  const busy = queueInfo && (queueInfo.worker.activity !== "idle" || dueCount() > 0);
-  subsTimer = setTimeout(() => {
-    loadSubscriptions();
-    if (busy) loadLibrary(true);
-  }, busy ? 5000 : 30000);
-}
-
-// Downloads that failed and are waiting to retry (premieres not yet aired don't count).
-function retrying(showId) {
-  if (!queueInfo) return [];
-  return queueInfo.items.filter((i) => i.error && i.error !== "upcoming"
-    && (showId === undefined || i.show_id === showId));
+  return res.status === 204 ? null : res.json();
 }
 
 function friendlyError(err) {
-  if (/not a bot|Sign in to confirm/i.test(err)) return "YouTube wants to confirm the server isn't a bot (set WREN_COOKIES)";
+  if (!err) return "";
+  if (/not a bot|Sign in to confirm/i.test(err)) return "YouTube wants to confirm the server isn't a bot";
   if (/429|Too Many Requests/.test(err)) return "YouTube is rate-limiting the server";
-  if (/unavailable|private|removed/i.test(err)) return "video unavailable";
-  return err.replace(/^ERROR:\s*(\[\w+\]\s*[\w-]+:\s*)?/, "").slice(0, 120);
+  if (/unavailable|private|removed/i.test(err)) return "Video unavailable";
+  if (/^too short/.test(err)) return err.replace("too short", "Too short");
+  if (err === "older than backfill") return "Older than the episodes picked at subscribe";
+  if (err === "title filter") return "Didn't match the title filter";
+  return err.replace(/^(feed: )?ERROR:\s*(\[\w+\]\s*[\w-]+:\s*)?/, "").slice(0, 140);
 }
 
-function workerStatus() {
-  if (!queueInfo) return subs === null ? "Can't reach the server right now." : "";
-  const w = queueInfo.worker;
-  const due = dueCount();
-  let text = "Up to date";
-  if (w.paused_until) text = `YouTube is rate-limiting the server · paused until ${fmtClock(w.paused_until)}`;
-  else if (w.activity === "checking shows") text = "Checking for new episodes…";
-  else if (due && w.override) text = `Downloading now · ${plural(due, "episode")} to go`;
-  else if (due && !w.active_now) text = `${plural(due, "download")} waiting until ${fmtClock(w.resume_at)}`;
-  else if (due) text = `Downloading · ${plural(due, "episode")} to go`;
-  else if (w.activity === "downloading") text = "Downloading…";
-  else if (retrying().length) text = `Waiting to retry ${plural(retrying().length, "download")}`;
-  return subs && subs.length ? `${text} · next check ${until(w.next_poll)}` : text;
+const feedUrl = (path) => new URL(path, location.href).href;
+// Apple Podcasts opens podcast:// links with "Follow a Show by URL" filled in.
+const podcastLink = (path) => `podcast://${location.host}${path}`;
+
+async function copyText(text, done = "Copied") {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(done);
+  } catch {
+    toast(text, 10000); // clipboard unavailable: show it to copy by hand
+  }
 }
 
-const FILTER_AFTER = 6; // show the filter box once there are more subscriptions than this
+// ---- format badges ---------------------------------------------------------
 
-function renderSubscriptions() {
-  const have = !!(subs && subs.length);
-  const none = !!(subs && !subs.length);
-
-  const formOpen = showSubForm || none;
-  $("sub-form").hidden = !formOpen;
-  $("sub-empty").hidden = !none;
-  const toggle = $("sub-add-toggle");
-  toggle.hidden = !have;
-  toggle.textContent = showSubForm ? "Cancel" : "+ Add";
-  toggle.setAttribute("aria-expanded", String(formOpen));
-
-  const filterEl = $("sub-filter");
-  filterEl.hidden = !(subs && subs.length > FILTER_AFTER);
-  $("sub-count").hidden = !filterEl.hidden;
-  $("sub-count").textContent = have ? plural(subs.length, "subscription") : "";
-
-  const status = workerStatus();
-  $("sub-status").textContent = status;
-  $("download-all").hidden = !have;
-  $("sub-statusbar").hidden = !status && !have;
-
-  const list = $("sub-list");
-  list.hidden = !have;
-  if (!have) return;
-  const q = filterEl.hidden ? "" : filterEl.value.trim().toLowerCase();
-  const shown = q ? subs.filter((s) => s.name.toLowerCase().includes(q)) : subs;
-  list.replaceChildren(...(shown.length
-    ? shown.map(subscriptionRow)
-    : [h("p", { class: "sub-none" }, "No subscriptions match.")]));
+function badge(mode) {
+  return h("span", { class: `badge ${mode}` }, mode === "video" ? "Video" : "Audio");
 }
 
-function subscriptionArt(s) {
-  return episodes.find((ep) => ep.show_id === s.id && ep.thumb_url)?.thumb_url;
+// AUDIO, VIDEO, or AUDIO + VIDEO when an audio show also gets video copies.
+function showBadges(s) {
+  return h("span", { class: "badges" },
+    s.mode === "video" ? badge("video") : badge("audio"),
+    s.mode === "audio" && s.video_copy ? badge("video") : null,
+    s.enabled ? null : h("span", { class: "badge muted" }, "Paused"));
 }
 
-function subscriptionRow(s) {
-  const open = expanded === s.id;
-  const waiting = retrying(s.id);
-  let warn = null;
-  if (s.last_error) warn = friendlyError(s.last_error);
-  else if (waiting.length) warn = `Retrying ${waiting.length}: ${friendlyError(waiting[0].error)}`;
-  else if (s.failed) warn = `${plural(s.failed, "download")} failed`;
+// ---- state & routing --------------------------------------------------------
 
-  const status = [
-    s.queued ? `${s.queued} queued` : plural(s.episodes, "episode"),
-    `checked ${ago(s.last_checked)}`,
-  ].join(" · ");
-  const detail = [
-    `${plural(s.episodes, "episode")} downloaded`,
-    s.keep_last > 0 ? `keeps the latest ${s.keep_last}` : "keeps everything",
-    s.mode,
-    s.video_copy ? `${s.video_copies}/${s.episodes} as video too` : null,
-  ].filter(Boolean).join(" · ");
-  const art = subscriptionArt(s);
-  const busy = queueInfo?.worker.override_shows?.includes(s.id);
-  const isConfirming = confirming.has(s.id);
+let overview = null; // /api/overview
+const details = new Map(); // show id ("singles" for single episodes) -> detail
+let loadError = null;
 
-  return h("div", { class: `sub-row${open ? " open" : ""}` },
+function route() {
+  const [path, query = ""] = location.hash.replace(/^#/, "").split("?");
+  const params = new URLSearchParams(query);
+  let m;
+  if ((m = path.match(/^\/show\/(\d+)$/))) return { name: "show", id: Number(m[1]), params };
+  if (path === "/singles") return { name: "singles", id: "singles", params };
+  if (path === "/add") return { name: "add", params };
+  if (path === "/status") return { name: "status", params };
+  return { name: "home", params };
+}
+
+// How deep a page is: Shows is the top; everything else sits one level in.
+function routeDepth(hash) {
+  return !hash || hash === "#/" || hash === "#" ? 0 : 1;
+}
+
+async function load() {
+  const r = route();
+  try {
+    if (r.name === "show") details.set(r.id, await api(`/api/shows/${r.id}/detail`));
+    else if (r.name === "singles") details.set("singles", await api("/api/singles"));
+    else if (r.name !== "add") overview = await api("/api/overview");
+    loadError = null;
+  } catch (err) {
+    loadError = err.message;
+  }
+  if (route().name === r.name) render();
+  schedule();
+}
+
+// Poll quickly while the server is busy so progress shows up; slowly otherwise.
+let pollTimer = null;
+function schedule() {
+  clearTimeout(pollTimer);
+  const r = route();
+  if (r.name === "add") return;
+  const data = r.name === "show" || r.name === "singles" ? details.get(r.id) : overview;
+  pollTimer = setTimeout(() => {
+    if (document.visibilityState === "visible") load();
+    else schedule();
+  }, isBusy(data) ? 4000 : 30000);
+}
+
+function isBusy(data) {
+  if (!data) return false;
+  const w = data.worker;
+  if (w && ["downloading", "checking shows"].includes(w.activity)) return true;
+  const entries = data.entries || [];
+  return entries.some((e) => ["downloading", "queued"].includes(e.state)) || (data.pending || []).length > 0;
+}
+
+// ---- rendering --------------------------------------------------------------
+
+function render() {
+  const r = route();
+  const top = r.name === "home";
+  $("back").hidden = top;
+  $("nav-actions").hidden = !top;
+
+  // While a settings field is being edited, leave the page alone so a refresh
+  // doesn't wipe what's being typed.
+  if (r.name === "show" && document.activeElement?.closest?.("#view .settings")) return;
+
+  let title = "Shows";
+  let sub = "";
+  let body;
+  if (r.name === "show") {
+    const d = details.get(r.id);
+    title = d?.show.name ?? "";
+    body = d ? showView(d) : placeholder();
+  } else if (r.name === "singles") {
+    title = "Single episodes";
+    const d = details.get("singles");
+    body = d ? singlesView(d) : placeholder();
+  } else if (r.name === "add") {
+    title = "Add";
+    body = addView(r.params);
+  } else if (r.name === "status") {
+    title = "Status";
+    body = overview ? statusView(overview) : placeholder();
+  } else {
+    sub = overview ? join(plural(overview.shows.length, "show"), plural(overview.totals.episodes, "episode"),
+      fmtBytes(overview.totals.bytes)) : "";
+    body = overview ? homeView(overview) : placeholder();
+  }
+  $("view-title").textContent = title;
+  $("nav-title").textContent = title;
+  $("view-sub").textContent = sub;
+  $("view-sub").hidden = !sub;
+  const error = loadError && r.name !== "add" ? banner(`Can't reach the server: ${loadError}`) : null;
+  $("view").replaceChildren(...[error, body].filter(Boolean));
+}
+
+function placeholder() {
+  return h("p", { class: "empty" }, loadError ? "" : "Loading…");
+}
+
+function banner(text) {
+  return h("div", { class: "banner" }, icon("alert"), h("span", {}, text));
+}
+
+function section(title, ...children) {
+  return h("section", { class: "section" }, title ? h("h2", {}, title) : null, ...children);
+}
+
+function art(url, cls = "art") {
+  return url ? h("img", { class: cls, src: url, alt: "", loading: "lazy" }) : h("span", { class: `${cls} blank` });
+}
+
+// ---- home -------------------------------------------------------------------
+
+const FILTER_AFTER = 6; // show the filter box once there are more shows than this
+let filter = "";
+
+function workerLine(data) {
+  const w = data.worker;
+  const pending = data.pending || [];
+  const downloading = pending.find((p) => p.state === "downloading");
+  const queued = pending.filter((p) => p.state === "queued").length;
+  let text;
+  let busy = false;
+  if (w.paused_until) text = `Paused · YouTube is rate-limiting until ${fmtClock(w.paused_until)}`;
+  else if (w.activity === "checking shows") { text = "Checking for new episodes…"; busy = true; }
+  else if (downloading) { text = `Downloading “${downloading.title}”`; busy = true; }
+  else if (w.activity === "downloading") { text = "Downloading…"; busy = true; }
+  else if (queued && !w.active_now && !w.override) text = `${queued} queued · downloads resume ${fmtClock(w.resume_at)}`;
+  else if (queued && w.activity === "hourly limit") text = `${queued} queued · hourly limit reached`;
+  else if (queued) text = `${queued} queued`;
+  else text = "Up to date";
+  return { text, busy, next: `Next check ${until(w.next_poll)}` };
+}
+
+function statusCard(data) {
+  const line = workerLine(data);
+  return h("a", { class: "status-card card", href: "#/status" },
+    h("span", { class: `status-dot${line.busy ? " busy" : ""}${data.worker.paused_until ? " paused" : ""}` }),
+    h("span", { class: "row-text" },
+      h("span", { class: "status-main" }, line.text),
+      h("span", { class: "row-meta" }, join(line.next, `${fmtBytes(data.disk.free)} free`))),
+    h("span", { class: "chev" }, icon("chevronRight")));
+}
+
+function homeView(data) {
+  if (!data.shows.length && !data.singles.episodes) {
+    return h("div", { class: "empty" },
+      h("p", {}, "No shows yet."),
+      h("a", { class: "button strong", href: "#/add" }, icon("plus"), "Add a show"));
+  }
+  const matching = () => {
+    const q = filter.trim().toLowerCase();
+    return q ? data.shows.filter((s) => s.name.toLowerCase().includes(q)) : data.shows;
+  };
+  const filterBox = data.shows.length > FILTER_AFTER ? h("input", {
+    class: "filter", type: "search", placeholder: "Filter shows", value: filter, autocomplete: "off",
+    oninput: (e) => {
+      filter = e.target.value;
+      document.querySelector(".show-list").replaceChildren(...showRows(matching()));
+    },
+  }) : null;
+  return h("div", {},
+    statusCard(data),
+    filterBox,
+    data.shows.length ? section("Shows", h("ul", { class: "show-list card list-card" }, ...showRows(matching()))) : null,
+    data.singles.episodes ? section("Other",
+      h("ul", { class: "card list-card" }, singlesRow(data.singles))) : null);
+}
+
+function showRows(shows) {
+  if (!shows.length) return [h("li", { class: "none" }, "No shows match.")];
+  return shows.map(showRow);
+}
+
+function showStatus(s) {
+  if (s.downloading) return h("span", { class: "row-status" }, h("span", { class: "spinner" }), "Downloading…");
+  if (s.last_error) return h("span", { class: "row-status warn" }, icon("alert"), friendlyError(s.last_error));
+  if (s.failed) return h("span", { class: "row-status warn" }, icon("alert"), `${plural(s.failed, "download")} failed`);
+  if (s.retrying) return h("span", { class: "row-status warn" }, `Retrying ${plural(s.retrying, "download")}`);
+  if (s.queued) return h("span", { class: "row-status" }, `${s.queued} queued`);
+  if (s.mode === "audio" && s.video_copy && s.video_copies < s.episodes) {
+    return h("span", { class: "row-status" }, `Video copies ${s.video_copies} of ${s.episodes}`);
+  }
+  return null;
+}
+
+function showRow(s) {
+  return h("li", {},
+    h("a", { class: "row", href: `#/show/${s.id}` },
+      art(s.art_url),
+      h("span", { class: "row-text" },
+        h("span", { class: "row-title" }, s.name),
+        h("span", { class: "row-meta" }, showBadges(s),
+          h("span", {}, join(plural(s.episodes, "episode"), fmtDate(s.newest_date), fmtBytes(s.bytes)))),
+        showStatus(s)),
+      h("span", { class: "chev" }, icon("chevronRight"))));
+}
+
+function singlesRow(singles) {
+  return h("li", {},
+    h("a", { class: "row", href: "#/singles" },
+      art(singles.art_url),
+      h("span", { class: "row-text" },
+        h("span", { class: "row-title" }, "Single episodes"),
+        h("span", { class: "row-meta" }, h("span", {}, join(plural(singles.episodes, "episode"), fmtBytes(singles.bytes))))),
+      h("span", { class: "chev" }, icon("chevronRight"))));
+}
+
+// ---- show page --------------------------------------------------------------
+
+let expanded = null; // video id of the episode row showing its actions
+const showSkipped = new Set(); // show ids with their skipped list open
+
+function feedButtons(path, label) {
+  return h("div", { class: "feed-buttons" },
+    h("a", { class: "button strong", href: podcastLink(path) }, icon("podcast"), label),
+    h("button", { class: "button", onclick: () => copyText(feedUrl(path), "Feed URL copied") }, icon("copy"), "Copy feed"));
+}
+
+function showHero(s) {
+  return h("div", { class: "hero card" },
+    h("div", { class: "hero-top" },
+      art(s.art_url, "hero-art"),
+      h("div", { class: "hero-info" },
+        showBadges(s),
+        h("div", { class: "hero-meta" }, join(plural(s.episodes, "episode"), fmtBytes(s.bytes))),
+        h("div", { class: "hero-meta" }, join(`Checked ${ago(s.last_checked)}`,
+          s.keep_last > 0 ? `keeps latest ${s.keep_last}` : "keeps everything")))),
+    feedButtons(s.feed_path, "Open in Podcasts"),
+    s.mode === "audio" && s.video_copy ? feedButtons(s.video_feed_path, "Open video feed") : null,
+    h("div", { class: "hero-actions" },
+      h("button", { class: "action", onclick: () => showCommand(s, "refresh", `Checking ${s.name} for new episodes…`) },
+        icon("refresh"), "Check now"),
+      h("button", { class: "action", onclick: () => showCommand(s, "download-now", `Downloading ${s.name} now…`) },
+        icon("download"), "Download now"),
+      h("a", { class: "action subtle", href: s.source_url, target: "_blank", rel: "noopener" }, icon("external"), "YouTube")));
+}
+
+async function showCommand(s, cmd, msg) {
+  try {
+    await api(`/api/shows/${s.id}/${cmd}`, { method: "POST" });
+    toast(msg);
+  } catch (err) {
+    toast(`Couldn't start: ${err.message}`);
+  }
+  setTimeout(load, 1500);
+}
+
+const IN_PROGRESS = ["downloading", "queued", "retrying", "premiere"];
+
+function entrySections(entries, { showId, onRetry }) {
+  const progress = entries.filter((e) => IN_PROGRESS.includes(e.state));
+  const done = entries.filter((e) => e.state === "downloaded");
+  const failed = entries.filter((e) => e.state === "failed");
+  const skipped = entries.filter((e) => e.state === "skipped");
+  const open = showSkipped.has(showId);
+  return [
+    progress.length ? section("In progress", h("ul", { class: "card list-card" }, progress.map((e) => pendingRow(e)))) : null,
+    failed.length ? section("Failed", h("ul", { class: "card list-card" }, failed.map((e) => pendingRow(e, onRetry)))) : null,
+    section("Downloaded", done.length
+      ? h("ul", { class: "card list-card" }, done.map(episodeRow))
+      : h("p", { class: "none card" }, progress.length ? "Nothing downloaded yet." : "No episodes downloaded.")),
+    skipped.length ? section(null,
+      h("button", {
+        class: "disclosure",
+        "aria-expanded": String(open),
+        onclick: () => { open ? showSkipped.delete(showId) : showSkipped.add(showId); render(); },
+      }, `${open ? "Hide" : "Show"} ${plural(skipped.length, "skipped episode")}`, h("span", { class: "chev" }, icon("chevronDown"))),
+      open ? h("ul", { class: "card list-card" }, skipped.map((e) => pendingRow(e, onRetry))) : null) : null,
+  ];
+}
+
+function stateText(e) {
+  switch (e.state) {
+    case "downloading": return [h("span", { class: "spinner" }), "Downloading…"];
+    case "queued": return ["Queued"];
+    case "premiere": return ["Premieres soon"];
+    case "retrying": return [`Retrying · ${friendlyError(e.error)}`];
+    case "failed": return [friendlyError(e.error) || "Failed"];
+    case "skipped": return [friendlyError(e.error) || "Skipped"];
+    default: return [];
+  }
+}
+
+function pendingRow(e, onRetry) {
+  const canRetry = onRetry && (e.state === "failed" || e.state === "skipped");
+  return h("li", { class: `ep pending ${e.state}` },
+    h("div", { class: "ep-head static" },
+      art(e.thumb_url, "ep-thumb"),
+      h("span", { class: "ep-text" },
+        h("span", { class: "ep-title" }, e.title || e.source_url),
+        h("span", { class: "ep-meta" }, ...stateText(e), e.duration ? ` · ${fmtDuration(e.duration)}` : null)),
+      canRetry ? h("button", { class: "action", onclick: () => onRetry(e) }, e.state === "failed" ? "Retry" : "Download") : null));
+}
+
+function episodeRow(e) {
+  const open = expanded === e.video_id;
+  const size = e.copies.reduce((n, c) => n + c.bytes, 0);
+  return h("li", { class: `ep${open ? " open" : ""}` },
     h("button", {
-      class: "sub-head",
+      class: "ep-head",
       "aria-expanded": String(open),
       // Toggle classes in place (no re-render) so the row animates open/closed.
-      onclick: (e) => {
-        const row = e.currentTarget.closest(".sub-row");
-        const wasOpen = row.classList.contains("open");
-        for (const r of $("sub-list").querySelectorAll(".sub-row.open")) {
-          r.classList.remove("open");
-          r.querySelector(".sub-head").setAttribute("aria-expanded", "false");
-        }
-        if (!wasOpen) {
-          row.classList.add("open");
-          e.currentTarget.setAttribute("aria-expanded", "true");
-        }
-        expanded = wasOpen ? null : s.id;
+      onclick: (ev) => {
+        const li = ev.currentTarget.closest(".ep");
+        const was = li.classList.contains("open");
+        document.querySelectorAll(".ep.open").forEach((x) => x.classList.remove("open"));
+        if (!was) li.classList.add("open");
+        expanded = was ? null : e.video_id;
       },
     },
-      art
-        ? h("img", { class: "sub-art", src: art, alt: "", loading: "lazy" })
-        : h("span", { class: "sub-art letter", "aria-hidden": "true" }, s.name.slice(0, 1).toUpperCase()),
-      h("span", { class: "sub-text" },
-        h("span", { class: "sub-name" }, s.name),
-        h("span", { class: "sub-meta" }, status),
-        warn ? h("span", { class: "sub-warn" }, warn) : null),
-      h("span", { class: "chev" }, icon("chevronDown"))),
+      art(e.thumb_url, "ep-thumb"),
+      h("span", { class: "ep-text" },
+        h("span", { class: "ep-title" }, e.title),
+        h("span", { class: "ep-meta" },
+          h("span", { class: "badges" }, e.copies.map((c) => badge(c.mode)),
+            e.copy_pending ? h("span", { class: "badge muted" }, "Video soon") : null),
+          h("span", {}, join(fmtDate(e.upload_date), fmtDuration(e.duration), fmtBytes(size)))))),
     // Always rendered; collapsed with CSS until the row is open.
-    h("div", { class: "sub-collapse" },
-      h("div", { class: "sub-body" },
-        h("div", { class: "sub-body-inner" },
-          h("p", { class: "sub-detail" }, detail),
-          h("div", { class: "sub-buttons" },
-            h("button", {
-              class: "action",
-              disabled: busy,
-              tabindex: open ? null : "-1",
-              onclick: () => downloadShowNow(s),
-            }, icon("download"), busy ? "Downloading…" : "Download now"),
-            h("button", {
-              class: "action subtle",
-              tabindex: open ? null : "-1",
-              onclick: () => copyFeed(s.feed_path),
-            }, "Copy feed"),
-            s.mode === "audio" ? h("button", {
-              class: `action subtle${s.video_copy ? " on" : ""}`,
-              "aria-pressed": String(!!s.video_copy),
-              tabindex: open ? null : "-1",
-              onclick: () => setVideoCopy(s, !s.video_copy),
-            }, s.video_copy ? "Video copies: on" : "Video copies: off") : null,
-            s.video_copy ? h("button", {
-              class: "action subtle",
-              tabindex: open ? null : "-1",
-              onclick: () => copyFeed(s.video_feed_path),
-            }, "Copy video feed") : null,
-            h("button", {
-              class: `action subtle${isConfirming ? " confirm" : ""}`,
-              tabindex: open ? null : "-1",
-              onclick: () => removeShow(s),
-            }, isConfirming ? "Tap again to remove" : "Remove"))))));
+    h("div", { class: "collapse" },
+      h("div", { class: "collapse-body" },
+        h("div", { class: "ep-actions" },
+          e.copies.map((c) => h("button", { class: "action", onclick: () => openPlayer(e, c) },
+            icon("play"), c.mode === "video" ? "Play video" : "Play audio")),
+          h("a", { class: "action subtle", href: e.source_url, target: "_blank", rel: "noopener" },
+            icon("external"), "YouTube")))));
 }
 
-// Podcast feed URLs, for following a show in a native podcast app.
-async function copyFeed(path) {
-  const url = new URL(path, location.href).href;
-  try {
-    await navigator.clipboard.writeText(url);
-    setStatus("Feed URL copied. In Apple Podcasts: Library → ⋯ → Follow a Show by URL.", 6000);
-  } catch {
-    setStatus(url, 10000); // clipboard unavailable: show it to copy by hand
-  }
+function showView(d) {
+  const s = d.show;
+  return h("div", {},
+    s.last_error ? banner(friendlyError(s.last_error)) : null,
+    showHero(s),
+    ...entrySections(d.entries, { showId: s.id, onRetry: (e) => requeue(s, e) }),
+    settingsCard(s));
 }
-// Audio shows can also get every episode as video, for a separate video feed.
-async function setVideoCopy(s, on) {
+
+async function requeue(s, e) {
   try {
-    const res = await fetch(`/api/shows/${s.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ video_copy: on }),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    setStatus(on ? `Downloading ${s.name} as video too. Its video feed fills in as they arrive.`
-      : `Stopped video copies for ${s.name}.`, 5000);
+    await api(`/api/shows/${s.id}/items/${encodeURIComponent(e.video_id)}/queue`, { method: "POST" });
+    toast(`Downloading “${e.title}”`);
   } catch (err) {
-    setStatus(`Couldn't change that: ${err.message}`);
+    toast(`Couldn't queue it: ${err.message}`);
   }
-  loadSubscriptions();
+  load();
 }
-$("copy-singles-feed").addEventListener("click", () => copyFeed("/feeds/singles.xml"));
 
-// Check one show and download its queue now, even outside the server's active hours.
-async function downloadShowNow(s) {
+// ---- show settings ------------------------------------------------------------
+
+const KEEP_OPTIONS = [[3, "Latest 3"], [5, "Latest 5"], [10, "Latest 10"], [20, "Latest 20"], [50, "Latest 50"], [0, "Everything"]];
+const MIN_OPTIONS = [[0, "Off"], [60, "1 min"], [180, "3 min"], [300, "5 min"], [600, "10 min"], [1200, "20 min"]];
+let confirmingRemove = null;
+
+async function patchShow(s, fields, msg) {
+  document.activeElement?.blur?.(); // let the refresh below re-render the settings
   try {
-    const res = await fetch(`/api/shows/${s.id}/download-now`, { method: "POST" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    setStatus(`Checking ${s.name} and downloading now…`);
+    await api(`/api/shows/${s.id}`, { method: "PATCH", body: fields });
+    if (msg) toast(msg);
   } catch (err) {
-    setStatus(`Couldn't start: ${err.message}`);
+    toast(`Couldn't save: ${err.message}`, 6000);
   }
-  setTimeout(loadSubscriptions, 2500);
+  load();
 }
 
-// Check every show and download what's queued now, even outside active hours.
-async function downloadNow() {
-  try {
-    await fetch("/api/download-now", { method: "POST" });
-    setStatus("Checking shows and downloading now…");
-  } catch {
-    setStatus("Can't reach the server right now.");
-  }
-  setTimeout(loadSubscriptions, 3000);
+function settingRow(label, control, hint) {
+  return h("div", { class: "setting" },
+    h("div", { class: "setting-main" }, h("span", { class: "setting-label" }, label), control),
+    hint ? h("p", { class: "setting-hint" }, hint) : null);
 }
 
-$("download-all").addEventListener("click", downloadNow);
-$("sub-filter").addEventListener("input", renderSubscriptions);
-$("sub-add-toggle").addEventListener("click", () => {
-  showSubForm = !showSubForm;
-  renderSubscriptions();
-  if (showSubForm) $("sub-url").focus();
-});
+function toggle(on, onchange, label) {
+  return h("button", {
+    class: "switch", role: "switch", "aria-checked": String(on), "aria-label": label,
+    onclick: (e) => { e.currentTarget.setAttribute("aria-checked", String(!on)); onchange(!on); },
+  });
+}
+
+function select(options, value, onchange) {
+  const all = options.some(([v]) => v === value) ? options : [[value, String(value)], ...options];
+  return h("select", { class: "select", onchange: (e) => onchange(Number(e.target.value)) },
+    all.map(([v, text]) => h("option", { value: String(v), selected: v === value }, text)));
+}
+
+function settingsCard(s) {
+  const confirming = confirmingRemove === s.id;
+  return section("Settings", h("div", { class: "settings card" },
+    settingRow("Format", h("div", { class: "segmented small", role: "radiogroup", "aria-label": "Format" },
+      ["audio", "video"].map((m) => h("label", {},
+        h("input", {
+          type: "radio", name: `mode-${s.id}`, value: m, checked: s.mode === m,
+          onchange: () => patchShow(s, { mode: m }, `New episodes will download as ${m}`),
+        }),
+        h("span", {}, m === "audio" ? "Audio" : "Video")))),
+      "Applies to episodes downloaded from now on."),
+    s.mode === "audio" ? settingRow("Also download video",
+      toggle(!!s.video_copy, (on) => patchShow(s, { video_copy: on },
+        on ? `Downloading ${s.name} as video too` : "Video copies off"), "Also download video"),
+      "Adds a separate video feed alongside the audio one.") : null,
+    settingRow("Check for new episodes", toggle(!!s.enabled, (on) => patchShow(s, { enabled: on },
+      on ? `Checking ${s.name} again` : `Paused ${s.name}`), "Check for new episodes")),
+    settingRow("Keep", select(KEEP_OPTIONS, s.keep_last, (v) => patchShow(s, { keep_last: v }, "Saved"))),
+    settingRow("Skip shorter than", select(MIN_OPTIONS, s.min_duration, (v) => patchShow(s, { min_duration: v }, "Saved")),
+      "Leaves out Shorts and clips."),
+    settingRow("Title filter", h("input", {
+      class: "text-input", type: "text", value: s.title_filter || "", placeholder: "Any title",
+      autocomplete: "off", autocapitalize: "off", spellcheck: "false",
+      onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); },
+      onchange: (e) => patchShow(s, { title_filter: e.target.value.trim() || null }, "Saved"),
+    }), "Only download episodes whose title matches (a regular expression)."),
+    h("button", { class: `remove${confirming ? " confirm" : ""}`, onclick: () => removeShow(s) },
+      confirming ? "Tap again to remove" : "Remove show")));
+}
 
 async function removeShow(s) {
-  if (!confirming.has(s.id)) {
-    confirming.add(s.id);
-    renderSubscriptions();
-    setTimeout(() => {
-      confirming.delete(s.id);
-      renderSubscriptions();
-    }, 3000);
-    return;
-  }
-  confirming.delete(s.id);
-  if (expanded === s.id) expanded = null;
-  try {
-    const res = await fetch(`/api/shows/${s.id}`, { method: "DELETE" });
-    if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`);
-    setStatus(`Unsubscribed from ${s.name}. Its episodes stay in your library.`, 5000);
-  } catch (err) {
-    setStatus(`Couldn't unsubscribe: ${err.message}`);
-  }
-  loadSubscriptions();
-  loadLibrary(true);
-}
-
-$("sub-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const btn = $("sub-submit");
-  const url = $("sub-url").value.trim();
-  const mode = new FormData(e.target).get("sub-mode");
-  btn.disabled = true;
-  btn.textContent = "Looking up show…";
-  try {
-    const res = await fetch("/api/shows", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url, mode }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
-    $("sub-url").value = "";
-    showSubForm = false;
-    setStatus(`Subscribed to ${data.name}. Fetching the latest episodes…`, 5000);
-    loadSubscriptions();
-  } catch (err) {
-    setStatus(`Couldn't subscribe: ${err.message}`, 8000);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "Subscribe";
-  }
-});
-
-// ---- offline downloads ----------------------------------------------------
-
-async function download(ep) {
-  const k = key(ep);
-  if (downloading.has(k)) return;
-  downloading.set(k, 0);
-  render();
-  try {
-    // Ask the browser not to evict our downloads under storage pressure.
-    navigator.storage?.persist?.();
-
-    const res = await fetch(ep.media_url);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const total = Number(res.headers.get("Content-Length")) || 0;
-
-    // Count bytes as they stream into the cache, without buffering in memory.
-    let loaded = 0;
-    let lastUi = 0;
-    const counter = new TransformStream({
-      transform(chunk, ctl) {
-        loaded += chunk.byteLength;
-        if (total && Date.now() - lastUi > 200) {
-          lastUi = Date.now();
-          downloading.set(k, loaded / total);
-          const fill = document.querySelector(`[data-dl="${CSS.escape(k)}"] .ring-fill`);
-          if (fill) fill.setAttribute("stroke-dashoffset", RING * (1 - loaded / total));
-        }
-        ctl.enqueue(chunk);
-      },
-    });
-
-    const cache = await caches.open(MEDIA_CACHE);
-    await cache.put(ep.media_url, new Response(res.body.pipeThrough(counter), {
-      headers: { "Content-Type": res.headers.get("Content-Type") || "application/octet-stream" },
-    }));
-    if (ep.thumb_url) await cache.add(ep.thumb_url).catch(() => {});
-    if (ep.subs_url) await cache.add(ep.subs_url).catch(() => {});
-    downloaded.add(ep.media_url);
-  } catch (e) {
-    setStatus(`Download failed: ${e.message}`);
-  } finally {
-    downloading.delete(k);
+  if (confirmingRemove !== s.id) {
+    confirmingRemove = s.id;
     render();
-  }
-}
-
-async function removeDownload(ep) {
-  await clearDownloads([ep]);
-}
-
-// Removes only the offline copies; episodes stay in the library and can be re-downloaded.
-async function clearDownloads(eps) {
-  const cache = await caches.open(MEDIA_CACHE);
-  let n = 0;
-  for (const ep of eps) {
-    if (current && key(current) === key(ep) && !media.paused) continue; // don't yank what's playing
-    await cache.delete(ep.media_url);
-    if (ep.subs_url) await cache.delete(ep.subs_url);
-    downloaded.delete(ep.media_url);
-    n++;
-  }
-  if (eps.length > 1) setStatus(`Cleared ${plural(n, "download")}`);
-  render();
-}
-
-// ---- player ---------------------------------------------------------------
-
-function play(ep) {
-  if (current && key(current) === key(ep)) {
-    openSheet();
-    if (media.paused) media.play().catch(() => {});
+    setTimeout(() => { if (confirmingRemove === s.id) { confirmingRemove = null; render(); } }, 3000);
     return;
   }
-  if (isDone(ep)) setDone(ep, false); // replaying a finished episode starts it over
-  if (current && !isDone(current)) setPos(current, media.currentTime); // remember where we left off
-  current = ep;
-
-  const isVideo = ep.mode === "video";
-  const next = isVideo ? videoEl : audioEl;
-  handoff = false;
-  wantPlaying = true;
-  videoEl.classList.remove("stale");
-  hideOverlay();
-  if (next !== media) {
-    // Stop and unload the other element before switching.
-    media.pause();
-    media.removeAttribute("src");
-    media.load();
-    media = next;
+  confirmingRemove = null;
+  try {
+    await api(`/api/shows/${s.id}`, { method: "DELETE" });
+    toast(`Removed ${s.name}. Its episodes moved to Single episodes.`, 5000);
+    navigate("#/");
+  } catch (err) {
+    toast(`Couldn't remove: ${err.message}`);
   }
-  $("mini").hidden = false;
-  document.body.classList.add("has-player");
+}
+
+// ---- single episodes -----------------------------------------------------------
+
+function singlesView(d) {
+  return h("div", {},
+    h("div", { class: "hero card" },
+      h("div", { class: "hero-top" },
+        art(overview?.singles.art_url ?? "/media/shows/singles.jpg", "hero-art"),
+        h("div", { class: "hero-info" },
+          h("div", { class: "hero-meta" }, "Episodes added one at a time, and those left from removed shows."))),
+      feedButtons("/feeds/singles.xml", "Open in Podcasts")),
+    ...entrySections(d.entries, { showId: "singles", onRetry: retryJob }));
+}
+
+async function retryJob(e) {
+  try {
+    await api("/api/add", { method: "POST", body: { url: e.source_url, mode: e.mode || "audio" } });
+    toast("Trying again…");
+  } catch (err) {
+    toast(`Couldn't retry: ${err.message}`);
+  }
+  load();
+}
+
+// ---- add ------------------------------------------------------------------------
+
+const add = { url: "", shared: null, busy: false, result: null, error: null, epMode: "audio", subMode: "audio", backfill: 3 };
+
+function addView(params) {
+  // A link from the "Share to Wren" shortcut: look it up straight away.
+  const shared = params.get("url");
+  if (shared && shared !== add.shared) {
+    add.shared = shared;
+    add.url = shared;
+    setTimeout(lookup, 0);
+  }
+  const canPaste = !!navigator.clipboard?.readText;
+  return h("div", {},
+    h("form", { class: "card add-form", onsubmit: (e) => { e.preventDefault(); lookup(); } },
+      h("div", { class: "input-row" },
+        h("input", {
+          id: "add-url", type: "url", value: add.url, placeholder: "YouTube channel, playlist or video",
+          autocomplete: "off", autocapitalize: "off", spellcheck: "false",
+          oninput: (e) => { add.url = e.target.value; },
+        }),
+        canPaste ? h("button", { type: "button", class: "action", onclick: pasteLink }, "Paste") : null),
+      h("button", { type: "submit", class: "primary", disabled: add.busy }, add.busy ? "Looking up…" : "Look up")),
+    add.error ? banner(add.error) : null,
+    add.result ? resultView(add.result) : null,
+    shareHelp());
+}
+
+async function pasteLink() {
+  try {
+    add.url = (await navigator.clipboard.readText()).trim();
+    render();
+    lookup();
+  } catch {
+    toast("Couldn't read the clipboard");
+  }
+}
+
+async function lookup() {
+  const url = add.url.trim();
+  if (!url || add.busy) return;
+  document.activeElement?.blur?.();
+  Object.assign(add, { busy: true, error: null, result: null });
+  render();
+  try {
+    add.result = await api("/api/resolve", { method: "POST", body: { url } });
+  } catch (err) {
+    add.error = err.message;
+  }
+  add.busy = false;
+  if (route().name === "add") render();
+}
+
+// `key` is the add-state field it sets: epMode (single episode) or subMode (subscription).
+function modePicker(key) {
+  return h("div", { class: "segmented", role: "radiogroup", "aria-label": "Format" },
+    ["audio", "video"].map((m) => h("label", {},
+      h("input", { type: "radio", name: key, value: m, checked: add[key] === m, onchange: () => { add[key] = m; } }),
+      h("span", {}, m === "audio" ? "Audio" : "Video"))));
+}
+
+function backfillPicker() {
+  return h("div", { class: "segmented four", role: "radiogroup", "aria-label": "Episodes to download now" },
+    [1, 3, 5, 10].map((n) => h("label", {},
+      h("input", { type: "radio", name: "backfill", value: n, checked: add.backfill === n, onchange: () => { add.backfill = n; } }),
+      h("span", {}, String(n)))));
+}
+
+function subscribeBlock(url, name, subscribed) {
+  if (subscribed) {
+    return h("a", { class: "row subscribed", href: `#/show/${subscribed.id}` },
+      icon("check"), h("span", { class: "row-text" }, `Already subscribed to ${subscribed.name}`),
+      h("span", { class: "chev" }, icon("chevronRight")));
+  }
+  return h("div", { class: "choice" },
+    h("div", { class: "field-label" }, "Format"), modePicker("subMode"),
+    h("div", { class: "field-label" }, "Download the latest"), backfillPicker(),
+    h("button", { class: "primary", onclick: (e) => subscribe(url, name, e.currentTarget) }, `Subscribe to ${name}`));
+}
+
+function resultView(r) {
+  if (r.kind === "show") {
+    return section("Show", h("div", { class: "card result" },
+      h("div", { class: "result-title" }, r.title),
+      r.latest.length ? h("ul", { class: "preview" }, r.latest.map((i) => h("li", {},
+        h("span", { class: "preview-title" }, i.title),
+        h("span", { class: "preview-meta" }, i.live ? "Live" : fmtDuration(i.duration) || "")))) : null,
+      subscribeBlock(r.url, r.title, r.subscribed)));
+  }
+  return h("div", {},
+    section("Episode", h("div", { class: "card result" },
+      h("div", { class: "result-video" },
+        art(r.thumb_url, "result-thumb"),
+        h("div", { class: "row-text" },
+          h("div", { class: "result-title" }, r.title),
+          h("div", { class: "row-meta" }, join(r.channel, fmtDuration(r.duration))))),
+      modePicker("epMode"),
+      h("button", { class: "button strong full", onclick: (e) => addEpisode(r.url, e.currentTarget) }, "Add just this episode"))),
+    r.channel_url ? section("Whole show", h("div", { class: "card result" },
+      r.subscribed ? null : h("div", { class: "result-title" }, r.channel),
+      subscribeBlock(r.channel_url, r.channel, r.subscribed))) : null);
+}
+
+async function subscribe(url, name, btn) {
+  btn.disabled = true;
+  btn.textContent = "Subscribing…";
+  try {
+    const show = await api("/api/shows", { method: "POST", body: { url, mode: add.subMode, backfill: add.backfill } });
+    toast(`Subscribed to ${show.name}. Downloading the latest ${add.backfill}.`, 5000);
+    Object.assign(add, { url: "", result: null, error: null });
+    navigate(`#/show/${show.id}`);
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = `Subscribe to ${name}`;
+    toast(`Couldn't subscribe: ${err.message}`, 6000);
+  }
+}
+
+async function addEpisode(url, btn) {
+  btn.disabled = true;
+  try {
+    await api("/api/add", { method: "POST", body: { url, mode: add.epMode } });
+    toast(`Downloading the ${add.epMode}…`, 4000);
+    Object.assign(add, { url: "", result: null, error: null });
+    navigate("#/singles");
+  } catch (err) {
+    btn.disabled = false;
+    toast(`Couldn't add: ${err.message}`, 6000);
+  }
+}
+
+let shareOpen = false;
+function shareHelp() {
+  const template = `${location.origin}/#/add?url=`;
+  return section(null,
+    h("button", { class: "disclosure", "aria-expanded": String(shareOpen), onclick: () => { shareOpen = !shareOpen; render(); } },
+      "Set up “Share to Wren”", h("span", { class: "chev" }, icon("chevronDown"))),
+    shareOpen ? h("div", { class: "card help" },
+      h("p", {}, "Put Wren in the share sheet of Safari and the YouTube app with a shortcut:"),
+      h("ol", {},
+        h("li", {}, "In Shortcuts, tap +, and name the shortcut “Share to Wren”."),
+        h("li", {}, "Tap ⓘ, turn on Show in Share Sheet, and have it receive URLs and Safari web pages."),
+        h("li", {}, "Add the URL Encode action, encoding the Shortcut Input."),
+        h("li", {}, "Add a Text action with the link below, then insert URL Encoded Text at its end."),
+        h("li", {}, "Add Open URLs, opening that Text.")),
+      h("div", { class: "template" }, h("code", {}, template),
+        h("button", { class: "action", onclick: () => copyText(template, "Link copied") }, icon("copy"), "Copy")),
+      h("p", { class: "setting-hint" },
+        "Sharing a video offers that episode or its whole show. iOS opens shortcut links in Safari, not the home-screen app.")) : null);
+}
+
+// ---- status -------------------------------------------------------------------
+
+function kv(label, value) {
+  return h("div", { class: "kv" }, h("span", {}, label), h("span", {}, value));
+}
+
+function statusView(data) {
+  const w = data.worker;
+  const [from, to] = w.active_hours;
+  const hour = (n) => new Date(2000, 0, 1, n % 24).toLocaleTimeString([], { hour: "numeric" });
+  const city = w.timezone.split("/").pop().replace(/_/g, " ");
+  const jobs = data.jobs.slice(0, 8);
+  return h("div", {},
+    section("Downloader", h("div", { class: "card list-card" },
+      kv("Now", workerLine(data).text),
+      kv("Downloads", `${hour(from)}–${hour(to)}, ${city}${w.active_now ? "" : " · resting"}`),
+      kv("Last check", ago(w.last_poll)),
+      kv("Next check", until(w.next_poll)),
+      w.paused_until ? kv("Paused until", fmtClock(w.paused_until)) : null),
+      h("div", { class: "hero-actions" },
+        h("button", { class: "action", onclick: () => command("/api/refresh", "Checking every show…") }, icon("refresh"), "Check all now"),
+        h("button", { class: "action", onclick: () => command("/api/download-now", "Downloading everything queued now…") },
+          icon("download"), "Download all now"))),
+    section("Queue", data.pending.length
+      ? h("ul", { class: "card list-card" }, data.pending.map((p) => h("li", { class: `ep pending ${p.state}` },
+        h("div", { class: "ep-head static" },
+          art(p.thumb_url, "ep-thumb"),
+          h("span", { class: "ep-text" },
+            h("span", { class: "ep-title" }, p.title),
+            h("span", { class: "ep-meta" }, ...stateText(p), ` · ${p.show}`))))))
+      : h("p", { class: "none card" }, "Nothing queued.")),
+    jobs.length ? section("Single episodes", h("div", { class: "card list-card" },
+      jobs.map((j) => kv(j.title || j.url,
+        j.status === "error" ? "Failed" : j.status === "done" ? ago(j.updated_at) : j.status === "running" ? "Downloading" : "Queued")))) : null,
+    section("Storage", h("div", { class: "card list-card" },
+      kv("Episodes", join(plural(data.totals.episodes, "episode"), fmtBytes(data.totals.bytes) || "0 MB")),
+      kv("Free space", `${fmtBytes(data.disk.free)} of ${fmtBytes(data.disk.total)}`))));
+}
+
+async function command(path, msg) {
+  try {
+    await api(path, { method: "POST" });
+    toast(msg);
+  } catch (err) {
+    toast(`Couldn't start: ${err.message}`);
+  }
+  setTimeout(load, 1500);
+}
+
+// ---- test player ------------------------------------------------------------------
+
+function openPlayer(e, copy) {
+  const isVideo = copy.mode === "video";
+  const el = h(isVideo ? "video" : "audio", { controls: true, playsinline: true, preload: "metadata", src: copy.media_url });
+  if (isVideo && copy.subs_url) el.append(h("track", { kind: "subtitles", srclang: "en", label: "English", src: copy.subs_url }));
+  $("player-wrap").replaceChildren(isVideo ? el : h("div", { class: "audio-player" }, art(e.thumb_url, "player-art"), el));
   $("sheet").classList.toggle("is-video", isVideo);
-  $("mini-title").textContent = ep.title;
-  $("mini-sub").textContent = ep.channel ?? "";
-  $("mini-thumb").src = ep.thumb_url ?? "";
-  $("sheet-title").textContent = ep.title;
-  $("sheet-channel").textContent = ep.channel ?? "";
-  $("sheet-art").src = ep.thumb_url ?? "";
-  if (isVideo) videoEl.poster = ep.thumb_url ?? "";
-  media.src = ep.media_url;
-  if (isVideo) setupSubtitles(ep);
-  else $("cc").hidden = true;
-  media.playbackRate = Number(lsGet("speed")) || 1;
-
-  const resumeAt = getPos(ep);
-  media.addEventListener("loadedmetadata", () => {
-    if (resumeAt && resumeAt < media.duration - 5) media.currentTime = resumeAt;
-  }, { once: true });
-
-  media.play().catch(() => {}); // autoplay may be blocked until user gesture
-  if (isVideo) unlockAudio(ep);
-  setupMediaSession(ep);
-  if (isVideo) openSheet();
-  render();
+  $("sheet-title").textContent = e.title;
+  $("sheet-sub").textContent = join(isVideo ? "Video" : "Audio", fmtDuration(e.duration), fmtBytes(copy.bytes));
+  openSheet();
+  el.play().catch(() => {});
 }
-
-// ---- background audio for video episodes ------------------------------------
-// iOS pauses <video> when the app goes to the background. For video episodes,
-// hand playback to the <audio> element (same file) on the way out, and back to
-// the video on return. The audio element is "unlocked" by the tap that started
-// the episode, so iOS lets it start later without another tap.
-let handoff = false; // true while <audio> is standing in for a video episode
-
-function unlockAudio(ep) {
-  audioEl.src = ep.media_url;
-  audioEl.preload = "metadata"; // don't start fetching the big video file twice
-  audioEl.muted = true;
-  audioEl.play().catch(() => {}); // within the tap: clears iOS's play restriction
-  audioEl.pause();
-  audioEl.muted = false;
-}
-
-// When iOS last paused the video on its own, to measure how early it does that.
-let videoPausedAt = 0;
-videoEl.addEventListener("pause", () => { videoPausedAt = performance.now(); });
-
-function handOffToAudio() {
-  if (handoff || media !== videoEl || !current || current.mode !== "video" || !wantPlaying) return;
-  handbackToken++; // cancel any hand-back still waiting
-  const t = videoEl.currentTime;
-  const rate = videoEl.playbackRate;
-  if (!sameSrc(audioEl, current.media_url)) audioEl.src = current.media_url;
-  media = audioEl;
-  handoff = true;
-  videoEl.pause();
-  // Hide the frozen frame; it fades back in once the video plays from the new spot.
-  videoEl.classList.add("stale");
-  const t0 = performance.now();
-  const start = () => {
-    if (Math.abs(audioEl.currentTime - t) > 0.25) audioEl.currentTime = t;
-    audioEl.playbackRate = rate;
-    audioEl.addEventListener("playing", () => {
-      clientLog(`handoff: video -> audio at ${Math.round(t)}s, sound after ${Math.round(performance.now() - t0)}ms`);
-    }, { once: true });
-    audioEl.play().catch((err) => {
-      clientLog(`handoff blocked at ${Math.round(t)}s: ${err.name} ${err.message}`);
-      media = videoEl;
-      handoff = false;
-      videoEl.classList.remove("stale");
-    });
-  };
-  if (audioEl.readyState >= 1) start();
-  else audioEl.addEventListener("loadedmetadata", start, { once: true });
-}
-
-// Hand back without a gap: keep the audio playing while the video gets going a
-// little ahead (muted, so iOS actually loads it; it won't buffer a paused
-// video), hold it there until the audio catches up, then switch.
-let handbackToken = 0;
-const HANDBACK_GIVE_UP_MS = 5000;
-
-function handBackToVideo() {
-  if (!handoff) return;
-  const token = ++handbackToken;
-  const live = () => token === handbackToken && handoff;
-  if (audioEl.paused) {
-    finishHandback(audioEl.currentTime, false);
-    return;
-  }
-  // Never leave the video black: if it's too slow, switch anyway.
-  const giveUp = setTimeout(() => {
-    if (!live()) return;
-    clientLog("handback: video slow to load, switching anyway");
-    finishHandback(audioEl.currentTime, !audioEl.paused);
-  }, HANDBACK_GIVE_UP_MS);
-
-  const attempt = (lead) => {
-    if (!live()) return;
-    videoEl.muted = true;
-    videoEl.playbackRate = audioEl.playbackRate;
-    videoEl.currentTime = audioEl.currentTime + lead * audioEl.playbackRate;
-    videoEl.play().catch(() => {});
-    whenPlayable(videoEl, () => {
-      if (!live()) return;
-      const ahead = (videoEl.currentTime - audioEl.currentTime) / audioEl.playbackRate;
-      if (ahead < 0.1) {
-        // Loading took longer than the lead: cue further ahead and try again.
-        if (lead >= 8) { clearTimeout(giveUp); finishHandback(audioEl.currentTime, true); }
-        else attempt(lead * 2);
-        return;
-      }
-      videoEl.pause(); // hold the loaded frame until the audio gets there
-      setTimeout(() => {
-        if (!live()) return;
-        clearTimeout(giveUp);
-        finishHandback(videoEl.currentTime, true, true);
-      }, ahead * 1000);
-    });
-  };
-  attempt(1);
-}
-
-// Calls fn once the element has finished seeking and has data to play.
-function whenPlayable(el, fn) {
-  const ready = () => !el.seeking && el.readyState >= 3;
-  if (ready()) { fn(); return; }
-  const check = () => {
-    if (!ready()) return;
-    for (const type of ["playing", "canplay", "seeked"]) el.removeEventListener(type, check);
-    fn();
-  };
-  for (const type of ["playing", "canplay", "seeked"]) el.addEventListener(type, check);
-}
-
-function finishHandback(t, play, alreadyCued = false) {
-  media = videoEl; // switch first, so the audio's pause event is ignored
-  handoff = false;
-  handbackToken++;
-  videoEl.muted = false;
-  if (!alreadyCued) videoEl.currentTime = t;
-  let shown = false;
-  const reveal = () => {
-    if (shown) return;
-    shown = true;
-    videoEl.classList.remove("stale");
-  };
-  setTimeout(reveal, 1500); // whatever happens, don't stay black
-  if (play) {
-    videoEl.addEventListener("playing", reveal, { once: true });
-    videoEl.play().catch((err) => { clientLog(`handback play failed: ${err.name}`); reveal(); });
-  } else if (videoEl.seeking) {
-    videoEl.addEventListener("seeked", reveal, { once: true });
-  } else {
-    reveal();
-  }
-  audioEl.pause();
-  clientLog(`handback: audio -> video at ${Math.round(t)}s (${play ? (alreadyCued ? "seamless" : "re-cued") : "paused"})`);
-  syncPlayButtons();
-  syncTime();
-}
-
-// While a video plays on screen, keep the paused audio element cued near the
-// same spot, so a hand-off has data ready instead of starting cold.
-setInterval(() => {
-  if (handoff || media !== videoEl || videoEl.paused || document.visibilityState !== "visible") return;
-  if (!current || current.mode !== "video" || !sameSrc(audioEl, current.media_url)) return;
-  audioEl.currentTime = videoEl.currentTime + 1;
-}, 10000);
-
-// ---- subtitles (video episodes) --------------------------------------------
-const subsOn = () => lsGet("subs") === "on";
-
-function setupSubtitles(ep) {
-  videoEl.querySelectorAll("track").forEach((t) => t.remove());
-  $("cc").hidden = !ep.subs_url;
-  if (!ep.subs_url) return;
-  const track = document.createElement("track");
-  track.kind = "subtitles";
-  track.srclang = "en";
-  track.label = "English";
-  track.src = ep.subs_url;
-  // YouTube's automatic captions pin every line to the left edge
-  // (align:start position:0%); center them along the bottom instead.
-  track.addEventListener("load", () => centerCues(track.track));
-  videoEl.append(track);
-  applySubtitles();
-}
-
-function centerCues(textTrack) {
-  for (const cue of textTrack.cues || []) {
-    cue.align = "center";
-    cue.position = "auto";
-    cue.size = 100;
-    cue.line = "auto";
-  }
-}
-
-function applySubtitles() {
-  const on = subsOn();
-  for (const t of videoEl.textTracks) t.mode = on ? "showing" : "hidden";
-  $("cc").setAttribute("aria-pressed", String(on));
-  $("cc").setAttribute("aria-label", on ? "Hide subtitles" : "Show subtitles");
-}
-
-$("cc").addEventListener("click", () => {
-  lsSet("subs", subsOn() ? "off" : "on");
-  applySubtitles();
-});
 
 function openSheet() {
   const el = $("sheet");
@@ -1086,29 +837,26 @@ function openSheet() {
 }
 
 function closeSheet() {
-  closeSleepMenu();
   $("sheet").classList.remove("open");
   $("sheet").setAttribute("aria-hidden", "true");
+  $("player-wrap").querySelector("audio, video")?.pause();
+  setTimeout(() => { if (!$("sheet").classList.contains("open")) $("player-wrap").replaceChildren(); }, 400);
 }
+$("sheet-close").addEventListener("click", closeSheet);
 
-// ---- swipe down to close the player ------------------------------------------
-
+// Swipe down to close the player (but leave the player's own controls alone).
 let drag = null;
 const sheetEl = $("sheet");
-
 sheetEl.addEventListener("touchstart", (e) => {
-  // Leave the scrubber, the video's own controls and the sleep menu alone.
-  if (e.touches.length !== 1 || e.target.closest("input, .popover, #sleep-backdrop, .scrubber")) return;
+  if (e.touches.length !== 1 || e.target.closest("audio, video")) return;
   drag = { y: e.touches[0].clientY, t: Date.now(), dy: 0 };
 }, { passive: true });
-
 sheetEl.addEventListener("touchmove", (e) => {
   if (!drag) return;
   drag.dy = Math.max(0, e.touches[0].clientY - drag.y);
   sheetEl.style.transition = "none";
   sheetEl.style.transform = `translateY(${drag.dy}px)`;
 }, { passive: true });
-
 function endDrag() {
   if (!drag) return;
   const fast = drag.dy / Math.max(1, Date.now() - drag.t) > 0.6;
@@ -1123,399 +871,6 @@ function endDrag() {
 sheetEl.addEventListener("touchend", endDrag);
 sheetEl.addEventListener("touchcancel", endDrag);
 
-// ---- sleep timer --------------------------------------------------------------
-
-const SLEEP_OPTIONS = [
-  { label: "When episode ends", value: "end" },
-  { label: "1 hour", value: 60 },
-  { label: "45 minutes", value: 45 },
-  { label: "30 minutes", value: 30 },
-  { label: "15 minutes", value: 15 },
-  { label: "10 minutes", value: 10 },
-  { label: "5 minutes", value: 5 },
-  { label: "Off", value: 0 },
-];
-let sleepValue = 0; // 0 (off), minutes, or "end"
-let sleepAt = null; // wall-clock deadline for timed choices
-
-// Seconds until the sleep timer pauses playback, or null when it's off.
-function sleepSecondsLeft(episodeLeft) {
-  if (sleepValue === "end") return Math.max(0, episodeLeft || 0);
-  if (sleepAt) return Math.max(0, Math.ceil((sleepAt - Date.now()) / 1000));
-  return null;
-}
-
-function syncSleep() {
-  const btn = $("sleep");
-  btn.innerHTML = svg(sleepValue ? "moonFill" : "moon");
-  btn.classList.toggle("on", sleepValue !== 0);
-  const left = sleepAt ? Math.max(1, Math.ceil((sleepAt - Date.now()) / 60000)) : 0;
-  btn.setAttribute("aria-label", sleepValue === 0 ? "Sleep timer: off"
-    : sleepValue === "end" ? "Sleep timer: end of episode" : `Sleep timer: ${left} min left`);
-}
-
-function setSleep(value) {
-  sleepValue = value;
-  sleepAt = typeof value === "number" && value ? Date.now() + value * 60000 : null;
-  syncSleep();
-  syncTime();
-}
-
-function checkSleep() {
-  if (sleepAt && Date.now() >= sleepAt) {
-    wantPlaying = false;
-    media.pause();
-    setSleep(0);
-    setStatus("Sleep timer ended");
-  }
-}
-
-function openSleepMenu() {
-  $("sleep-menu").replaceChildren(...SLEEP_OPTIONS.map((opt) => {
-    const checked = opt.value === sleepValue;
-    return h("button", {
-      class: "popover-item",
-      role: "menuitemradio",
-      "aria-checked": String(checked),
-      onclick: () => {
-        setSleep(opt.value);
-        closeSleepMenu();
-      },
-    }, h("span", { class: "popover-check" }, checked ? icon("check") : null), opt.label);
-  }));
-  $("sleep-menu").hidden = false;
-  $("sleep-backdrop").hidden = false;
-  $("sleep").setAttribute("aria-expanded", "true");
-}
-
-function closeSleepMenu() {
-  $("sleep-menu").hidden = true;
-  $("sleep-backdrop").hidden = true;
-  $("sleep").setAttribute("aria-expanded", "false");
-}
-
-$("sleep").addEventListener("click", () => {
-  $("sleep-menu").hidden ? openSleepMenu() : closeSleepMenu();
-});
-$("sleep-backdrop").addEventListener("click", closeSleepMenu);
-
-// timeupdate keeps firing while audio plays in the background, unlike timers
-// that iOS may slow down, so check the deadline there too.
-// Tick the countdown every second while a timer is on (it runs even when paused).
-setInterval(() => {
-  if (!sleepValue) return;
-  checkSleep();
-  syncTime();
-  syncSleep();
-}, 1000);
-
-function markCurrentDone() {
-  if (!current || isDone(current)) return;
-  setDone(current, true);
-  render();
-}
-
-function setupMediaSession(ep) {
-  if (!("mediaSession" in navigator)) return;
-  navigator.mediaSession.metadata = new MediaMetadata({
-    title: ep.title,
-    artist: ep.channel ?? "",
-    artwork: ep.thumb_url ? [{ src: ep.thumb_url, sizes: "1280x720", type: "image/jpeg" }] : [],
-  });
-  const ms = navigator.mediaSession;
-  ms.setActionHandler("play", resumeFromSystem);
-  ms.setActionHandler("pause", pauseFromSystem);
-  ms.setActionHandler("seekbackward", (d) => skip(-(d.seekOffset || 15)));
-  ms.setActionHandler("seekforward", (d) => skip(d.seekOffset || 30));
-  ms.setActionHandler("seekto", (d) => { media.currentTime = d.seekTime; });
-}
-
-if (navigator.audioSession) {
-  try { navigator.audioSession.type = "playback"; } catch {}
-}
-
-// Lock screen / Control Center. Resuming after a pause in the background only
-// works for a few seconds: iOS then drops a home-screen app's audio session and
-// the play button can't reach it until the app is opened (WebKit bug 243258).
-// A silent <audio> keepalive took over Now Playing, and Web Audio is blocked in
-// the background, so there's no web-side workaround.
-function pauseFromSystem() {
-  wantPlaying = false;
-  media.pause();
-  if (current && !isDone(current)) setPos(current, media.currentTime); // where to resume
-}
-
-function resumeFromSystem() {
-  wantPlaying = true;
-  media.play().catch((err) => clientLog(`resume (lock screen) failed: ${err.name}`));
-}
-
-// An element's source without any media fragment (#t=...).
-function srcOf(el) {
-  return (el.currentSrc || el.src).split("#")[0];
-}
-
-function sameSrc(el, url) {
-  return srcOf(el).endsWith(url);
-}
-
-function skip(delta) {
-  media.currentTime = Math.max(0, Math.min(media.duration || 0, media.currentTime + delta));
-}
-
-function togglePlay() {
-  if (media.paused) {
-    wantPlaying = true;
-    media.play().catch(() => {});
-  } else {
-    wantPlaying = false;
-    media.pause();
-  }
-}
-
-function syncPlayButtons() {
-  const name = media.paused ? "play" : "pause";
-  const label = media.paused ? "Play" : "Pause";
-  for (const id of ["play", "mini-play", "ov-play"]) {
-    $(id).innerHTML = svg(name);
-    $(id).setAttribute("aria-label", label);
-  }
-}
-
-function syncSpeed() {
-  $("speed").textContent = `${media.playbackRate}×`;
-}
-
-function syncTime() {
-  // While the finger is on the scrubber, it owns the position; don't fight it.
-  if (!scrubbing) showTime(media.currentTime || 0);
-}
-
-function showTime(t) {
-  const d = media.duration || 0;
-  const pct = d ? (t / d) * 100 : 0;
-  $("seek").style.setProperty("--pct", `${pct}%`);
-  $("seek").setAttribute("aria-valuenow", String(Math.floor(t)));
-  $("seek").setAttribute("aria-valuetext", fmt(t));
-  $("mini-bar").style.width = `${pct}%`;
-  $("cur").textContent = fmt(t);
-  // With a sleep timer on, the right-hand time counts down to sleep instead
-  // (like Apple Podcasts): "ᶻz 4:51".
-  const left = sleepSecondsLeft(d - t);
-  $("remain").textContent = left === null ? `-${fmt(d - t)}` : `ᶻz ${fmt(left)}`;
-  $("remain").classList.toggle("sleeping", left !== null);
-}
-
-$("play").addEventListener("click", togglePlay);
-// ---- video overlay ------------------------------------------------------------
-// Tapping the picture shows play/pause, CC and full screen; while playing it
-// fades out after a few seconds. Tapping the dim area (not a button) hides it.
-const OVERLAY_HIDE_MS = 3000;
-let overlayTimer = null;
-
-function showOverlay() {
-  $("video-overlay").classList.add("show");
-  scheduleOverlayHide();
-}
-
-function hideOverlay() {
-  clearTimeout(overlayTimer);
-  $("video-overlay").classList.remove("show");
-}
-
-function scheduleOverlayHide() {
-  clearTimeout(overlayTimer);
-  // Stays up while paused, so it's clear how to resume.
-  if (!videoEl.paused) overlayTimer = setTimeout(hideOverlay, OVERLAY_HIDE_MS);
-}
-
-// Taps on the picture: single tap shows/hides the overlay; double-tap on the
-// left or right third skips back 15 s / forward 30 s (keep tapping to keep
-// skipping). Side taps wait a moment to tell a single tap from a double.
-const DOUBLE_TAP_MS = 300;
-let lastPictureTap = { at: 0, side: null };
-let singleTapTimer = null;
-let seekHint = { total: 0, timer: null };
-
-$("video-wrap").addEventListener("click", (e) => {
-  if (e.target.closest("button")) {
-    scheduleOverlayHide(); // an overlay button was used: keep it up a little longer
-    return;
-  }
-  const r = $("video-wrap").getBoundingClientRect();
-  const x = (e.clientX - r.left) / r.width;
-  const side = x < 0.35 ? "back" : x > 0.65 ? "fwd" : null;
-  const now = performance.now();
-  if (side && side === lastPictureTap.side && now - lastPictureTap.at < DOUBLE_TAP_MS) {
-    clearTimeout(singleTapTimer);
-    skip(side === "back" ? -15 : 30);
-    showSeekHint(side);
-    lastPictureTap = { at: now, side }; // chain further taps
-    return;
-  }
-  lastPictureTap = { at: now, side };
-  const wasShown = $("video-overlay").classList.contains("show");
-  clearTimeout(singleTapTimer);
-  singleTapTimer = setTimeout(() => (wasShown ? hideOverlay() : showOverlay()),
-    side ? DOUBLE_TAP_MS : 0);
-});
-
-function showSeekHint(side) {
-  const el = $("seek-hint");
-  if (!el.classList.contains(side)) seekHint.total = 0;
-  seekHint.total += side === "back" ? 15 : 30;
-  el.className = `seek-hint ${side} show`;
-  el.textContent = `${side === "back" ? "−" : "+"}${seekHint.total}`;
-  clearTimeout(seekHint.timer);
-  seekHint.timer = setTimeout(() => {
-    el.classList.remove("show");
-    seekHint.total = 0;
-  }, 700);
-}
-$("ov-play").addEventListener("click", togglePlay);
-// Full screen: iPhones only allow it through iOS's own video player
-// (webkitEnterFullscreen); other browsers use the standard API.
-$("fullscreen").addEventListener("click", () => {
-  if (!document.fullscreenEnabled && videoEl.webkitEnterFullscreen) videoEl.webkitEnterFullscreen();
-  else if (videoEl.requestFullscreen) videoEl.requestFullscreen().catch(() => {});
-  else if (videoEl.webkitEnterFullscreen) videoEl.webkitEnterFullscreen();
-});
-$("mini-play").addEventListener("click", togglePlay);
-$("mini-open").addEventListener("click", openSheet);
-$("sheet-close").addEventListener("click", closeSheet);
-$("skip-back").addEventListener("click", () => skip(-15));
-$("skip-fwd").addEventListener("click", () => skip(30));
-$("speed").addEventListener("click", () => {
-  const next = SPEEDS[(SPEEDS.indexOf(media.playbackRate) + 1) % SPEEDS.length];
-  media.playbackRate = next;
-  lsSet("speed", String(next));
-});
-// ---- scrubber ---------------------------------------------------------------
-// A custom slider instead of <input type=range>: on iOS the native one only
-// moves if you start exactly on its small knob, and seeking on every move makes
-// it stutter. Here a touch anywhere on the (tall, invisible) hit area jumps to
-// that point and follows the finger; the audio seeks once, on release.
-let scrubbing = false;
-let scrubTime = 0;
-
-function scrubTo(clientX) {
-  const r = $("seek").getBoundingClientRect();
-  const frac = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
-  scrubTime = frac * (media.duration || 0);
-  showTime(scrubTime);
-}
-
-$("seek").addEventListener("pointerdown", (e) => {
-  if (!media.duration || (e.pointerType === "mouse" && e.button !== 0)) return;
-  e.preventDefault();
-  scrubbing = true;
-  $("seek").classList.add("dragging");
-  try { $("seek").setPointerCapture(e.pointerId); } catch {} // keep following off the bar
-  scrubTo(e.clientX);
-});
-$("seek").addEventListener("pointermove", (e) => {
-  if (scrubbing) scrubTo(e.clientX);
-});
-$("seek").addEventListener("pointerup", () => {
-  if (!scrubbing) return;
-  scrubbing = false;
-  $("seek").classList.remove("dragging");
-  media.currentTime = scrubTime;
-  showTime(scrubTime);
-});
-$("seek").addEventListener("pointercancel", () => {
-  // The gesture was taken away (e.g. by the system): put it back where it was.
-  scrubbing = false;
-  $("seek").classList.remove("dragging");
-  syncTime();
-});
-$("seek").addEventListener("keydown", (e) => {
-  if (e.key === "ArrowLeft") { skip(-15); e.preventDefault(); }
-  if (e.key === "ArrowRight") { skip(30); e.preventDefault(); }
-});
-document.addEventListener("keydown", (e) => {
-  if (e.key !== "Escape") return;
-  if (!$("sleep-menu").hidden) closeSleepMenu();
-  else closeSheet();
-});
-
-onMedia("play", () => {
-  syncPlayButtons();
-  if (media === videoEl && $("video-overlay").classList.contains("show")) scheduleOverlayHide();
-});
-onMedia("ratechange", syncSpeed);
-// Re-register the lock-screen handlers whenever playback (re)starts; iOS can
-// drop them after the audio session was interrupted.
-onMedia("playing", () => { if (current) setupMediaSession(current); });
-onMedia("pause", () => {
-  syncPlayButtons();
-  if (media === videoEl) clearTimeout(overlayTimer); // keep a visible overlay up while paused
-  if (current && !isDone(current)) {
-    setPos(current, media.currentTime);
-    render();
-  }
-});
-onMedia("ended", () => {
-  wantPlaying = false;
-  markCurrentDone();
-  if (sleepValue === "end") setSleep(0);
-});
-onMedia("loadedmetadata", () => {
-  $("seek").setAttribute("aria-valuemax", String(Math.floor(media.duration)));
-  syncTime();
-});
-
-let lastSave = 0;
-onMedia("timeupdate", () => {
-  syncTime();
-  checkSleep();
-  if (!current || isDone(current)) return;
-  if (media.duration && media.currentTime >= media.duration * DONE_AT) {
-    markCurrentDone();
-  } else if (Date.now() - lastSave > 5000) {
-    setPos(current, media.currentTime);
-    lastSave = Date.now();
-  }
-});
-
-// ---- add form -------------------------------------------------------------
-
-$("add-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const url = $("add-url").value.trim();
-  const mode = new FormData(e.target).get("mode");
-  try {
-    const res = await fetch("/api/add", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url, mode }),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const { job_id } = await res.json();
-    $("add-url").value = "";
-    pollJob(job_id);
-  } catch (err) {
-    setStatus(`Couldn't add: ${err.message}`);
-  }
-});
-
-async function pollJob(jobId) {
-  const jobs = await (await fetch("/api/jobs")).json();
-  const job = jobs[jobId];
-  if (!job) return;
-  if (job.status === "done") {
-    setStatus(`Added “${job.title}”`);
-    loadLibrary();
-  } else if (job.status === "error") {
-    setStatus(`Couldn't add: ${job.error}`, 8000);
-  } else {
-    setStatus(`Fetching ${job.mode}…`, 0);
-    setTimeout(() => pollJob(jobId), 2000);
-  }
-}
-
-// ---- boot -----------------------------------------------------------------
-
 // ---- fast taps ------------------------------------------------------------
 // iOS Safari swallows or delays taps for a moment after a list stops scrolling;
 // native apps don't. Recognise taps ourselves and activate on touchend. A touch
@@ -1523,7 +878,7 @@ async function pollJob(jobId) {
 // apps. Speed matters, not timing: iOS keeps nudging a list by fractions of a
 // pixel (and firing scroll events) well after it looks still, and taps then
 // must still work.
-const TAPPABLE = 'button, a[href], [role="menuitemradio"], #sleep-backdrop, video, #video-overlay';
+const TAPPABLE = 'button, a[href], [role="switch"]';
 const MOVING_PX_PER_MS = 0.25; // ~250 px/s: faster than this reads as "still scrolling"
 let lastScroll = { at: 0, top: 0, speed: 0 };
 let tapStart = null;
@@ -1545,13 +900,7 @@ function listStillMoving() {
 document.addEventListener("touchstart", (e) => {
   if (e.touches.length !== 1) { tapStart = null; return; }
   const t = e.touches[0];
-  tapStart = {
-    x: t.clientX,
-    y: t.clientY,
-    at: performance.now(),
-    target: e.target,
-    stoppingScroll: listStillMoving(),
-  };
+  tapStart = { x: t.clientX, y: t.clientY, at: performance.now(), target: e.target, stoppingScroll: listStillMoving() };
 }, { passive: true }); // a touchstart listener also makes iOS show :active styles
 
 document.addEventListener("touchmove", (e) => {
@@ -1564,17 +913,14 @@ document.addEventListener("touchend", (e) => {
   const tap = tapStart;
   tapStart = null;
   if (!tap || tap.stoppingScroll || performance.now() - tap.at > 500) return;
-  // Leave form controls (sliders, text fields, the Audio/Video toggle) to iOS.
-  if (tap.target.closest("input, select, textarea, label")) return;
+  // Leave form controls and the player's own controls to iOS.
+  if (tap.target.closest("input, select, textarea, label, audio, video")) return;
   const el = tap.target.closest(TAPPABLE);
   if (!el || el.disabled) return;
+  // Links that leave the app (YouTube, Apple Podcasts) keep iOS's own handling.
+  if (el.matches('a[target="_blank"], a[href^="podcast:"]')) return;
   e.preventDefault(); // skip Safari's own (delayed) click so it doesn't fire twice
-  if (el.matches("video, #video-overlay")) {
-    const t = e.changedTouches[0];
-    el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, clientX: t.clientX, clientY: t.clientY }));
-  } else {
-    el.click();
-  }
+  el.click();
 }, { passive: false });
 
 // iOS can ignore user-scalable=no; cancel its pinch gestures directly.
@@ -1582,11 +928,7 @@ for (const type of ["gesturestart", "gesturechange", "gestureend"]) {
   document.addEventListener(type, (e) => e.preventDefault(), { passive: false });
 }
 
-seenSince(); // start the "new episodes" clock on this device's first launch
-document.querySelectorAll("[data-icon]").forEach((el) => el.prepend(icon(el.dataset.icon)));
-syncPlayButtons();
-syncSpeed();
-syncSleep();
+// ---- navigation ---------------------------------------------------------------
 
 // Show the compact nav title once the large title has scrolled under the nav bar.
 function syncNav() {
@@ -1599,22 +941,17 @@ $("scroller").addEventListener("scroll", syncNav, { passive: true });
 const scrollMemory = new Map();
 
 function onRoute({ restoreScroll = false } = {}) {
-  visitSnapshot.clear();
+  expanded = null;
+  confirmingRemove = null;
   render();
   $("scroller").scrollTop = restoreScroll ? (scrollMemory.get(location.hash) || 0) : 0;
   syncNav();
-  if (onSettings()) loadSubscriptions();
-  else clearTimeout(subsTimer);
+  load();
 }
 
-// How deep a page is: Shows is the top; a show or Settings sits one level in.
-function routeDepth(hash) {
-  return !hash || hash === "#/" ? 0 : 1;
-}
-
-// Move to another page with an iOS-style push/pop slide (or a quick fade between
-// pages at the same depth, like the Settings tabs). Uses view transitions where
-// the browser supports them; elsewhere it simply switches.
+// Move to another page with an iOS-style push/pop slide. Uses view transitions
+// where the browser supports them; elsewhere it simply switches.
+let navToken = 0;
 function navigate(href) {
   if (href === location.hash) return;
   const from = routeDepth(location.hash);
@@ -1635,11 +972,10 @@ function navigate(href) {
     if (token === navToken) delete document.documentElement.dataset.nav;
   });
 }
-let navToken = 0;
 
 // In-app links replace the current history entry instead of adding one, so
-// iOS's edge swipe has nothing to go "back" to (it would drag the app's pages,
-// or the player, sideways). The on-screen back button still works.
+// iOS's edge swipe has nothing to go "back" to (it would drag the app's pages
+// sideways). The on-screen back button still works.
 document.addEventListener("click", (e) => {
   const a = e.target.closest('a[href^="#/"]');
   if (!a || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
@@ -1648,20 +984,19 @@ document.addEventListener("click", (e) => {
 });
 window.addEventListener("hashchange", () => onRoute());
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "hidden") {
-    if (current?.mode === "video") {
-      const early = videoEl.paused ? ` (iOS paused it ${Math.round(performance.now() - videoPausedAt)}ms earlier)` : "";
-      clientLog(`hidden: video ${videoEl.paused ? "already paused" : "playing"}${early}, wantPlaying=${wantPlaying}`);
-    }
-    handOffToAudio();
-    return;
-  }
-  handBackToVideo();
-  loadLibrary(true);
-  if (onSettings()) loadSubscriptions();
+  if (document.visibilityState === "visible") load();
 });
-if (onSettings()) loadSubscriptions();
-window.addEventListener("online", render);
-window.addEventListener("offline", render);
-if (canOffline) navigator.serviceWorker.register("sw.js");
-loadLibrary();
+
+// ---- boot -----------------------------------------------------------------
+
+// The player version of Wren cached episodes on the phone through a service
+// worker; remove it and its caches to give that space back.
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.getRegistrations().then((regs) => regs.forEach((r) => r.unregister())).catch(() => {});
+}
+if ("caches" in window) {
+  caches.keys().then((keys) => keys.forEach((k) => caches.delete(k))).catch(() => {});
+}
+
+document.querySelectorAll("[data-icon]").forEach((el) => el.prepend(icon(el.dataset.icon)));
+onRoute();

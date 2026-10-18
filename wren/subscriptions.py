@@ -124,6 +124,15 @@ def update_show(show_id: int, **fields) -> dict:
     return show
 
 
+def requeue_item(show_id: int, item_id: str) -> bool:
+    """Queue a skipped or failed episode again, with fresh attempts."""
+    with db.connect() as conn:
+        return bool(conn.execute(
+            """UPDATE feed_items SET status = 'queued', attempts = 0, error = NULL, next_try = 0
+               WHERE show_id = ? AND item_id = ? AND status IN ('skipped', 'failed')""",
+            (show_id, item_id)).rowcount)
+
+
 def unsubscribe(show_id: int) -> None:
     """Remove a show. Its downloaded episodes stay in the library as manual adds."""
     with db.connect() as conn:

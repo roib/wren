@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import artwork, db, podcast, subscriptions, worker
+from . import admin, artwork, db, podcast, subscriptions, worker
 from .config import BASE_URL, MEDIA_DIR, WEB_DIR, WORKER_ENABLED
 
 # Slim container images lack /etc/mime.types; without these, media is served as
@@ -50,16 +50,53 @@ async def revalidate_app_files(request, call_next):
     return response
 
 
-# ---- library ----------------------------------------------------------------------
+# ---- management app ---------------------------------------------------------------
 
-@app.get("/api/library")
-def library():
-    episodes = db.list_episodes()
-    for ep in episodes:
-        ep["media_url"] = f"/media/{ep['file']}"
-        ep["thumb_url"] = f"/media/{ep['thumb']}" if ep["thumb"] else None
-        ep["subs_url"] = f"/media/{ep['subtitles']}" if ep.get("subtitles") else None
-    return episodes
+@app.get("/api/overview")
+def overview():
+    """Everything the home and status screens show, in one request."""
+    return {
+        **admin.overview(),
+        "worker": background.status(),
+        "pending": subscriptions.list_pending(),
+        "jobs": worker.list_jobs(20),
+    }
+
+
+@app.get("/api/shows/{show_id}/detail")
+def show_detail(show_id: int):
+    detail = admin.show_detail(show_id)
+    if not detail:
+        raise HTTPException(404, "no such show")
+    return {**detail, "worker": background.status()}
+
+
+@app.get("/api/singles")
+def singles():
+    return {**admin.singles_detail(), "worker": background.status()}
+
+
+class ResolveRequest(BaseModel):
+    url: str
+
+
+@app.post("/api/resolve")
+def resolve(req: ResolveRequest):
+    try:
+        return admin.resolve(req.url)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:  # network / yt-dlp trouble
+        msg = str(e).splitlines()[0][:200]
+        raise HTTPException(502, f"Couldn't look that up: {msg}")
+
+
+@app.post("/api/shows/{show_id}/items/{item_id}/queue", status_code=202)
+def requeue(show_id: int, item_id: str):
+    if not subscriptions.requeue_item(show_id, item_id):
+        raise HTTPException(404, "no skipped or failed episode with that id")
+    background.download_now(show_id)
+    return {"ok": True}
 
 
 # ---- manual downloads ---------------------------------------------------------------
@@ -175,23 +212,6 @@ def refresh_all():
 def download_now():
     background.download_now()
     return {"ok": True}
-
-
-@app.get("/api/pending")
-def pending():
-    """Episodes on their way: what the app shows greyed out until they arrive."""
-    return {"worker": background.status(), "items": subscriptions.list_pending()}
-
-
-class ClientLog(BaseModel):
-    msg: str
-
-
-@app.post("/api/client-log", status_code=204)
-def client_log(entry: ClientLog):
-    """Lets the app record what happened on the phone (e.g. background hand-off)."""
-    log.info("client: %s", entry.msg[:300])
-    return Response(status_code=204)
 
 
 @app.get("/api/queue")
