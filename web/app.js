@@ -118,7 +118,9 @@ function friendlyError(err) {
   if (!err) return "";
   if (/not a bot|Sign in to confirm/i.test(err)) return "YouTube wants to confirm the server isn't a bot";
   if (/429|Too Many Requests/.test(err)) return "YouTube is rate-limiting the server";
-  if (/unavailable|private|removed/i.test(err)) return "Video unavailable";
+  if (/^(private|members-only) video$/.test(err)) return err[0].toUpperCase() + err.slice(1);
+  if (/Private video/.test(err)) return "Private video";
+  if (/unavailable|removed/i.test(err)) return "Video unavailable";
   if (/^too short/.test(err)) return err.replace("too short", "Too short");
   if (err === "older than backfill") return "Older than the episodes picked at subscribe";
   if (err === "title filter") return "Didn't match the title filter";

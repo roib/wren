@@ -135,7 +135,9 @@ def fetch(feed_url: str) -> Feed:
     with _ydl(LIST_LIMIT if uploads else PLAYLIST_LIMIT) as ydl:
         info = ydl.extract_info(feed_url, download=False)
 
-    entries = [e for e in info.get("entries") or [] if e and e.get("id")]
+    # Private and deleted videos stay in playlists as untitled placeholders that
+    # can never be downloaded; leave them out (one made public later shows up as new).
+    entries = [e for e in info.get("entries") or [] if e and e.get("id") and e.get("title")]
     if not uploads:
         try:
             entries = _newest_first(entries, info.get("channel_id"))

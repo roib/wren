@@ -92,6 +92,18 @@ class Skipped(Exception):
     """The video exists but shouldn't be downloaded (live, too short, ...)."""
 
 
+class Unavailable(Exception):
+    """The video can't be downloaded at all: private, members-only or removed."""
+
+
+_UNAVAILABLE = [
+    (re.compile(r"Private video", re.I), "private video"),
+    (re.compile(r"members.only|Join this channel", re.I), "members-only video"),
+    (re.compile(r"Video unavailable|This video (is|has been) (unavailable|removed)|account .* terminated", re.I),
+     "video unavailable"),
+]
+
+
 class RateLimited(Exception):
     """YouTube is throttling us (HTTP 429 or "confirm you're not a bot")."""
 
@@ -140,6 +152,9 @@ def download(url: str, mode: str = "audio", show_id: int | None = None,
     except yt_dlp.utils.DownloadError as e:
         if is_rate_limited(e):
             raise RateLimited(str(e)) from e
+        for pattern, reason in _UNAVAILABLE:
+            if pattern.search(str(e)):
+                raise Unavailable(reason) from e
         raise
 
     media = _media_file(info)

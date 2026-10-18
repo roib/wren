@@ -258,6 +258,11 @@ def _try_download(show: dict, item: dict) -> bool:
             _set_item(show["id"], item["item_id"], status="skipped", error=str(e), next_try=0)
         log.info("%s: skipped %s (%s)", show["name"], item["title"], e)
         return False
+    except downloader.Unavailable as e:
+        # Private, members-only or removed: retrying won't help.
+        _set_item(show["id"], item["item_id"], status="skipped", error=str(e), next_try=0)
+        log.info("%s: skipped %s (%s)", show["name"], item["title"] or item["item_id"], e)
+        return False
     except downloader.RateLimited as e:
         # Not this episode's fault: don't use up an attempt, just release it and
         # let the caller pause everything.
@@ -366,6 +371,10 @@ def download_next_copy(show_ids: list[int] | None = None) -> bool:
         downloader.download(ep["source_url"], "video", show_id=show["id"])
     except downloader.RateLimited:
         raise
+    except downloader.Unavailable as e:
+        _copy_failures[ep["video_id"]] = (MAX_ATTEMPTS, 0)  # never going to work
+        log.info("%s: no video copy of %s (%s)", show["name"], ep["title"], e)
+        return True
     except Exception as e:
         attempts = _copy_failures.get(ep["video_id"], (0, 0))[0] + 1
         _copy_failures[ep["video_id"]] = (attempts, _now() + COPY_RETRY_SECONDS * attempts)
