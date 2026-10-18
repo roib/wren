@@ -663,6 +663,26 @@ body.has-player #toast { bottom: calc(env(safe-area-inset-bottom) + 96px); }
 .ovbtn .ic { width: 16px; height: 16px; }
 .ovbtn.cc[aria-pressed="true"] { background: #fff; color: #000; }
 .ov-play:active, .ovbtn:active { opacity: 0.7; }
+/* "−15" / "+30" shown on the side you double-tapped. */
+.seek-hint {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+  z-index: 1;
+}
+.seek-hint.back { left: 10%; }
+.seek-hint.fwd { right: 10%; }
+.seek-hint.show { opacity: 1; }
 video::cue { background: rgba(0, 0, 0, 0.65); color: #fff; font-size: 0.85em; }
 #sheet.is-video #sheet-art { display: none; }
 

@@ -998,8 +998,20 @@ function setupSubtitles(ep) {
   track.srclang = "en";
   track.label = "English";
   track.src = ep.subs_url;
+  // YouTube's automatic captions pin every line to the left edge
+  // (align:start position:0%); center them along the bottom instead.
+  track.addEventListener("load", () => centerCues(track.track));
   videoEl.append(track);
   applySubtitles();
+}
+
+function centerCues(textTrack) {
+  for (const cue of textTrack.cues || []) {
+    cue.align = "center";
+    cue.position = "auto";
+    cue.size = 100;
+    cue.line = "auto";
+  }
 }
 
 function applySubtitles() {
@@ -1166,11 +1178,33 @@ function setupMediaSession(ep) {
     artwork: ep.thumb_url ? [{ src: ep.thumb_url, sizes: "1280x720", type: "image/jpeg" }] : [],
   });
   const ms = navigator.mediaSession;
-  ms.setActionHandler("play", () => { wantPlaying = true; media.play().catch(() => {}); });
-  ms.setActionHandler("pause", () => { wantPlaying = false; media.pause(); });
+  ms.setActionHandler("play", () => resumeFromSystem("lock screen"));
+  ms.setActionHandler("pause", () => {
+    wantPlaying = false;
+    media.pause();
+    clientLog(`pause (lock screen) at ${Math.round(media.currentTime)}s`);
+  });
   ms.setActionHandler("seekbackward", (d) => skip(-(d.seekOffset || 15)));
   ms.setActionHandler("seekforward", (d) => skip(d.seekOffset || 30));
   ms.setActionHandler("seekto", (d) => { media.currentTime = d.seekTime; });
+}
+
+// Resume from the lock screen / Control Center. iOS can resume an element that
+// sat paused in the background without its audio actually restarting (looks
+// like it's playing, but silent); re-seeking to the current spot first makes it
+// restart cleanly. Logged so on-device behaviour shows up in the server log.
+function resumeFromSystem(source) {
+  wantPlaying = true;
+  const el = media;
+  const t = el.currentTime;
+  const before = `readyState ${el.readyState}, network ${el.networkState}`;
+  el.currentTime = t;
+  el.play().then(() => {
+    clientLog(`resume (${source}) at ${Math.round(t)}s: play ok (${before} -> readyState ${el.readyState})`);
+    setTimeout(() => {
+      clientLog(`resume check: ${el.paused ? "paused" : "playing"}, advanced ${(el.currentTime - t).toFixed(1)}s in ~2s`);
+    }, 2000);
+  }).catch((err) => clientLog(`resume (${source}) failed: ${err.name} ${err.message}`));
 }
 
 function skip(delta) {
@@ -1243,11 +1277,49 @@ function scheduleOverlayHide() {
   if (!videoEl.paused) overlayTimer = setTimeout(hideOverlay, OVERLAY_HIDE_MS);
 }
 
-videoEl.addEventListener("click", showOverlay);
-$("video-overlay").addEventListener("click", (e) => {
-  if (e.target === e.currentTarget) hideOverlay();
-  else scheduleOverlayHide(); // a button was used: keep it up a little longer
+// Taps on the picture: single tap shows/hides the overlay; double-tap on the
+// left or right third skips back 15 s / forward 30 s (keep tapping to keep
+// skipping). Side taps wait a moment to tell a single tap from a double.
+const DOUBLE_TAP_MS = 300;
+let lastPictureTap = { at: 0, side: null };
+let singleTapTimer = null;
+let seekHint = { total: 0, timer: null };
+
+$("video-wrap").addEventListener("click", (e) => {
+  if (e.target.closest("button")) {
+    scheduleOverlayHide(); // an overlay button was used: keep it up a little longer
+    return;
+  }
+  const r = $("video-wrap").getBoundingClientRect();
+  const x = (e.clientX - r.left) / r.width;
+  const side = x < 0.35 ? "back" : x > 0.65 ? "fwd" : null;
+  const now = performance.now();
+  if (side && side === lastPictureTap.side && now - lastPictureTap.at < DOUBLE_TAP_MS) {
+    clearTimeout(singleTapTimer);
+    skip(side === "back" ? -15 : 30);
+    showSeekHint(side);
+    lastPictureTap = { at: now, side }; // chain further taps
+    return;
+  }
+  lastPictureTap = { at: now, side };
+  const wasShown = $("video-overlay").classList.contains("show");
+  clearTimeout(singleTapTimer);
+  singleTapTimer = setTimeout(() => (wasShown ? hideOverlay() : showOverlay()),
+    side ? DOUBLE_TAP_MS : 0);
 });
+
+function showSeekHint(side) {
+  const el = $("seek-hint");
+  if (!el.classList.contains(side)) seekHint.total = 0;
+  seekHint.total += side === "back" ? 15 : 30;
+  el.className = `seek-hint ${side} show`;
+  el.textContent = `${side === "back" ? "−" : "+"}${seekHint.total}`;
+  clearTimeout(seekHint.timer);
+  seekHint.timer = setTimeout(() => {
+    el.classList.remove("show");
+    seekHint.total = 0;
+  }, 700);
+}
 $("ov-play").addEventListener("click", togglePlay);
 // Full screen: iPhones only allow it through iOS's own video player
 // (webkitEnterFullscreen); other browsers use the standard API.
@@ -1442,7 +1514,12 @@ document.addEventListener("touchend", (e) => {
   const el = tap.target.closest(TAPPABLE);
   if (!el || el.disabled) return;
   e.preventDefault(); // skip Safari's own (delayed) click so it doesn't fire twice
-  el.click();
+  if (el.matches("video, #video-overlay")) {
+    const t = e.changedTouches[0];
+    el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, clientX: t.clientX, clientY: t.clientY }));
+  } else {
+    el.click();
+  }
 }, { passive: false });
 
 // iOS can ignore user-scalable=no; cancel its pinch gestures directly.
