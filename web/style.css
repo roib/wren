@@ -604,32 +604,44 @@ body.has-player #toast { bottom: calc(env(safe-area-inset-bottom) + 96px); }
 #sheet-title { font-size: 20px; font-weight: 700; line-height: 1.25; letter-spacing: -0.01em; }
 #sheet-channel { font-size: 16px; color: var(--muted); margin-top: 4px; }
 
-#seek {
+/* Scrubber: a 36px-tall touch area around a thin bar; the bar thickens and the
+   knob grows while dragging (like Apple Podcasts). */
+.scrubber {
   --pct: 0%;
-  -webkit-appearance: none;
-  appearance: none;
-  width: 100%;
-  height: 22px;
-  margin: 0;
-  background: transparent;
+  position: relative;
+  height: 36px;
+  margin: -8px 0;
+  touch-action: none;
   cursor: pointer;
+  outline: none;
 }
-#seek::-webkit-slider-runnable-track {
+.scrub-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
   height: 4px;
-  border-radius: 2px;
-  background: linear-gradient(to right, var(--fg) var(--pct), var(--line) var(--pct));
+  transform: translateY(-50%);
+  border-radius: 4px;
+  background: var(--line);
+  overflow: hidden;
+  transition: height 0.15s;
 }
-#seek::-webkit-slider-thumb {
-  -webkit-appearance: none;
+.scrub-fill { height: 100%; width: var(--pct); background: var(--fg); }
+.scrub-thumb {
+  position: absolute;
+  top: 50%;
+  left: var(--pct);
   width: 14px;
   height: 14px;
-  margin-top: -5px;
   border-radius: 50%;
   background: var(--fg);
+  transform: translate(-50%, -50%);
+  transition: width 0.15s, height 0.15s;
 }
-#seek::-moz-range-track { height: 4px; border-radius: 2px; background: var(--line); }
-#seek::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--fg); }
-#seek::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: var(--fg); }
+.scrubber.dragging .scrub-track { height: 8px; }
+.scrubber.dragging .scrub-thumb { width: 22px; height: 22px; }
+.scrubber:focus-visible .scrub-thumb { box-shadow: 0 0 0 3px var(--line); }
 
 .times {
   display: flex;

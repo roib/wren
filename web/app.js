@@ -811,7 +811,7 @@ const sheetEl = $("sheet");
 
 sheetEl.addEventListener("touchstart", (e) => {
   // Leave the scrubber, the video's own controls and the sleep menu alone.
-  if (e.touches.length !== 1 || e.target.closest("input, video, .popover, #sleep-backdrop")) return;
+  if (e.touches.length !== 1 || e.target.closest("input, video, .popover, #sleep-backdrop, .scrubber")) return;
   drag = { y: e.touches[0].clientY, t: Date.now(), dy: 0 };
 }, { passive: true });
 
@@ -964,11 +964,16 @@ function syncSpeed() {
 }
 
 function syncTime() {
+  // While the finger is on the scrubber, it owns the position; don't fight it.
+  if (!scrubbing) showTime(media.currentTime || 0);
+}
+
+function showTime(t) {
   const d = media.duration || 0;
-  const t = media.currentTime || 0;
   const pct = d ? (t / d) * 100 : 0;
-  $("seek").value = Math.floor(t);
   $("seek").style.setProperty("--pct", `${pct}%`);
+  $("seek").setAttribute("aria-valuenow", String(Math.floor(t)));
+  $("seek").setAttribute("aria-valuetext", fmt(t));
   $("mini-bar").style.width = `${pct}%`;
   $("cur").textContent = fmt(t);
   // With a sleep timer on, the right-hand time counts down to sleep instead
@@ -989,7 +994,49 @@ $("speed").addEventListener("click", () => {
   media.playbackRate = next;
   lsSet("speed", String(next));
 });
-$("seek").addEventListener("input", (e) => { media.currentTime = Number(e.target.value); });
+// ---- scrubber ---------------------------------------------------------------
+// A custom slider instead of <input type=range>: on iOS the native one only
+// moves if you start exactly on its small knob, and seeking on every move makes
+// it stutter. Here a touch anywhere on the (tall, invisible) hit area jumps to
+// that point and follows the finger; the audio seeks once, on release.
+let scrubbing = false;
+let scrubTime = 0;
+
+function scrubTo(clientX) {
+  const r = $("seek").getBoundingClientRect();
+  const frac = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
+  scrubTime = frac * (media.duration || 0);
+  showTime(scrubTime);
+}
+
+$("seek").addEventListener("pointerdown", (e) => {
+  if (!media.duration || (e.pointerType === "mouse" && e.button !== 0)) return;
+  e.preventDefault();
+  scrubbing = true;
+  $("seek").classList.add("dragging");
+  try { $("seek").setPointerCapture(e.pointerId); } catch {} // keep following off the bar
+  scrubTo(e.clientX);
+});
+$("seek").addEventListener("pointermove", (e) => {
+  if (scrubbing) scrubTo(e.clientX);
+});
+$("seek").addEventListener("pointerup", () => {
+  if (!scrubbing) return;
+  scrubbing = false;
+  $("seek").classList.remove("dragging");
+  media.currentTime = scrubTime;
+  showTime(scrubTime);
+});
+$("seek").addEventListener("pointercancel", () => {
+  // The gesture was taken away (e.g. by the system): put it back where it was.
+  scrubbing = false;
+  $("seek").classList.remove("dragging");
+  syncTime();
+});
+$("seek").addEventListener("keydown", (e) => {
+  if (e.key === "ArrowLeft") { skip(-15); e.preventDefault(); }
+  if (e.key === "ArrowRight") { skip(30); e.preventDefault(); }
+});
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   if (!$("sleep-menu").hidden) closeSleepMenu();
@@ -1010,7 +1057,7 @@ media.addEventListener("ended", () => {
   if (sleepValue === "end") setSleep(0);
 });
 media.addEventListener("loadedmetadata", () => {
-  $("seek").max = Math.floor(media.duration);
+  $("seek").setAttribute("aria-valuemax", String(Math.floor(media.duration)));
   syncTime();
 });
 
@@ -1068,12 +1115,28 @@ async function pollJob(jobId) {
 // ---- fast taps ------------------------------------------------------------
 // iOS Safari swallows or delays taps for a moment after a list stops scrolling;
 // native apps don't. Recognise taps ourselves and activate on touchend. A touch
-// that lands while the list is still moving only stops it, as in native apps.
+// that lands while the list is still visibly moving only stops it, as in native
+// apps. Speed matters, not timing: iOS keeps nudging a list by fractions of a
+// pixel (and firing scroll events) well after it looks still, and taps then
+// must still work.
 const TAPPABLE = 'button, a[href], [role="menuitemradio"], #sleep-backdrop';
-let lastScrollAt = 0;
+const MOVING_PX_PER_MS = 0.25; // ~250 px/s: faster than this reads as "still scrolling"
+let lastScroll = { at: 0, top: 0, speed: 0 };
 let tapStart = null;
 
-$("scroller").addEventListener("scroll", () => { lastScrollAt = performance.now(); }, { passive: true });
+$("scroller").addEventListener("scroll", (e) => {
+  const now = performance.now();
+  const top = e.currentTarget.scrollTop;
+  const dt = Math.max(1, now - lastScroll.at);
+  // Ignore the gap since the previous scroll gesture: speed is only meaningful
+  // between events that are close together.
+  const speed = dt < 100 ? Math.abs(top - lastScroll.top) / dt : 0;
+  lastScroll = { at: now, top, speed };
+}, { passive: true });
+
+function listStillMoving() {
+  return performance.now() - lastScroll.at < 100 && lastScroll.speed > MOVING_PX_PER_MS;
+}
 
 document.addEventListener("touchstart", (e) => {
   if (e.touches.length !== 1) { tapStart = null; return; }
@@ -1083,7 +1146,7 @@ document.addEventListener("touchstart", (e) => {
     y: t.clientY,
     at: performance.now(),
     target: e.target,
-    stoppingScroll: performance.now() - lastScrollAt < 80,
+    stoppingScroll: listStillMoving(),
   };
 }, { passive: true }); // a touchstart listener also makes iOS show :active styles
 
