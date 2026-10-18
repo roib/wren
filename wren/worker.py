@@ -125,7 +125,10 @@ class Worker:
         self.last_poll: float | None = None
         self.next_download_at = 0.0  # earliest time for the next subscription download
         self.paused_until = 0.0  # set when YouTube rate-limits us
-        self.override = False  # "download now": ignore active hours until the queue is empty
+        # "Download now": ignore active hours until the queue (of all shows, or of
+        # the requested ones) is empty.
+        self.override_all = False
+        self.override_shows: set[int] = set()
         self.activity = "idle"
 
     def start(self) -> None:
@@ -152,12 +155,16 @@ class Worker:
             self._refresh.add(show_id)
         self._wake.set()
 
-    def download_now(self) -> None:
-        """Check every show, then download what's queued even outside active hours.
-        The gap between downloads, the hourly cap and rate-limit pauses still apply."""
-        self.override = True
+    def download_now(self, show_id: int | None = None) -> None:
+        """Check every show (or one), then download what's queued even outside
+        active hours. The gap between downloads, the hourly cap and rate-limit
+        pauses still apply."""
+        if show_id is None:
+            self.override_all = True
+        else:
+            self.override_shows.add(show_id)
         self.next_download_at = 0.0
-        self.refresh()
+        self.refresh(show_id)
 
     def status(self) -> dict:
         now = time.time()
@@ -171,7 +178,8 @@ class Worker:
             "active_now": is_active(now),
             "resume_at": int(next_active(now)),
             "paused_until": int(self.paused_until) if self.paused_until > now else None,
-            "override": self.override,
+            "override": self.override_all or bool(self.override_shows),
+            "override_shows": sorted(self.override_shows),
         }
 
     def _run(self) -> None:
@@ -225,7 +233,8 @@ class Worker:
                 self.next_download_at = time.time() + subscriptions.pause_seconds()
                 return True
 
-            if not (self.override or is_active(now)):
+            active = is_active(now)
+            if not (active or self.override_all or self.override_shows):
                 self.activity = "resting"
                 return False
             if self._hourly_cap_reached(now):
@@ -234,11 +243,16 @@ class Worker:
             if now < self.next_download_at:
                 self.activity = "waiting"
                 return False
-            if subscriptions.download_next():
+            # Outside active hours with only some shows requested, stick to those.
+            only = None if (active or self.override_all) else sorted(self.override_shows)
+            if subscriptions.download_next(only):
                 self._recent.append(now)
                 self.next_download_at = time.time() + subscriptions.pause_seconds()
                 return True
-            self.override = False  # queue is empty: back to the normal schedule
+            # Nothing left (for the requested shows): back to the normal schedule.
+            self.override_shows.clear()
+            if only is None:
+                self.override_all = False
         except downloader.RateLimited:
             self.paused_until = time.time() + BLOCK_PAUSE_MINUTES * 60
             self.activity = "paused"

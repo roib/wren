@@ -145,6 +145,14 @@ def refresh_show(show_id: int):
     return {"ok": True}
 
 
+@app.post("/api/shows/{show_id}/download-now", status_code=202)
+def download_show_now(show_id: int):
+    if not subscriptions.get_show(show_id):
+        raise HTTPException(404, "no such show")
+    background.download_now(show_id)
+    return {"ok": True}
+
+
 @app.post("/api/refresh", status_code=202)
 def refresh_all():
     background.refresh()

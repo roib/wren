@@ -29,35 +29,56 @@
     <ul id="list"></ul>
 
     <section id="settings" hidden>
-      <h2>Subscriptions</h2>
-      <form id="sub-form" class="card">
-        <input id="sub-url" type="url" placeholder="YouTube channel or playlist URL" required autocomplete="off">
-        <div class="segmented" role="radiogroup" aria-label="Format">
-          <label><input type="radio" name="sub-mode" value="audio" checked><span>Audio</span></label>
-          <label><input type="radio" name="sub-mode" value="video"><span>Video</span></label>
-        </div>
-        <button type="submit" class="primary" id="sub-submit">Subscribe</button>
-      </form>
-      <div class="card list-card" id="sub-list" hidden></div>
-      <p class="hint" id="sub-status"></p>
-
-      <h2>Add episode</h2>
-      <form id="add-form" class="card">
-        <input id="add-url" type="url" placeholder="Paste a video URL" required autocomplete="off">
-        <div class="segmented" role="radiogroup" aria-label="Format">
-          <label><input type="radio" name="mode" value="audio" checked><span>Audio</span></label>
-          <label><input type="radio" name="mode" value="video"><span>Video</span></label>
-        </div>
-        <button type="submit" class="primary">Add</button>
-      </form>
-
-      <h2>Downloads</h2>
-      <div class="card list-card">
-        <div class="kv"><span>Saved on this device</span><span id="dl-count">—</span></div>
-        <div class="kv"><span>Storage used</span><span id="dl-usage">—</span></div>
-        <div id="clear-area"></div>
+      <div class="tabs-wrap">
+        <nav class="tabs" aria-label="Settings sections">
+          <a href="#/settings" data-tab="subs">Subscriptions</a>
+          <a href="#/settings/add" data-tab="add">Add episode</a>
+          <a href="#/settings/downloads" data-tab="downloads">Downloads</a>
+        </nav>
       </div>
-      <p class="hint" id="dl-hint">Clearing removes only the copies saved on this device. Episodes stay in your library and can be downloaded again.</p>
+
+      <div class="tab-panel" data-panel="subs">
+        <div class="subs-toolbar">
+          <span id="sub-count"></span>
+          <input id="sub-filter" type="search" placeholder="Filter subscriptions" autocomplete="off" hidden>
+          <button id="sub-add-toggle" class="pill" type="button" aria-expanded="false" hidden>+ Add</button>
+        </div>
+        <form id="sub-form" class="card" hidden>
+          <input id="sub-url" type="url" placeholder="YouTube channel or playlist URL" required autocomplete="off">
+          <div class="segmented" role="radiogroup" aria-label="Format">
+            <label><input type="radio" name="sub-mode" value="audio" checked><span>Audio</span></label>
+            <label><input type="radio" name="sub-mode" value="video"><span>Video</span></label>
+          </div>
+          <button type="submit" class="primary" id="sub-submit">Subscribe</button>
+        </form>
+        <p class="hint" id="sub-empty" hidden>Subscribe to a YouTube channel or playlist and its new episodes download automatically.</p>
+        <div class="status-bar" id="sub-statusbar" hidden>
+          <span id="sub-status"></span>
+          <button id="download-all" class="pill" type="button">Download all</button>
+        </div>
+        <div class="card list-card" id="sub-list" hidden></div>
+      </div>
+
+      <div class="tab-panel" data-panel="add" hidden>
+        <form id="add-form" class="card">
+          <input id="add-url" type="url" placeholder="Paste a video URL" required autocomplete="off">
+          <div class="segmented" role="radiogroup" aria-label="Format">
+            <label><input type="radio" name="mode" value="audio" checked><span>Audio</span></label>
+            <label><input type="radio" name="mode" value="video"><span>Video</span></label>
+          </div>
+          <button type="submit" class="primary">Add</button>
+        </form>
+        <p class="hint">Downloads a single video into your library without subscribing to its channel.</p>
+      </div>
+
+      <div class="tab-panel" data-panel="downloads" hidden>
+        <div class="card list-card">
+          <div class="kv"><span>Saved on this device</span><span id="dl-count">—</span></div>
+          <div class="kv"><span>Storage used</span><span id="dl-usage">—</span></div>
+          <div id="clear-area"></div>
+        </div>
+        <p class="hint" id="dl-hint">Clearing removes only the copies saved on this device. Episodes stay in your library and can be downloaded again.</p>
+      </div>
     </section>
   </main>
 
@@ -93,8 +114,10 @@
         <button id="skip-back" class="icon-btn lg" aria-label="Back 15 seconds" data-icon="back"></button>
         <button id="play" class="play-btn" aria-label="Play"></button>
         <button id="skip-fwd" class="icon-btn lg" aria-label="Forward 30 seconds" data-icon="fwd"></button>
-        <button id="sleep" class="chip sleep" aria-label="Sleep timer: off"></button>
+        <button id="sleep" class="chip sleep" aria-label="Sleep timer: off" aria-haspopup="menu" aria-expanded="false"></button>
       </div>
+      <div id="sleep-backdrop" hidden></div>
+      <div id="sleep-menu" class="popover" role="menu" aria-label="Sleep timer" hidden></div>
     </div>
   </section>
 

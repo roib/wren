@@ -193,13 +193,21 @@ function groupShows(eps) {
 
 // ---- rendering --------------------------------------------------------------
 
+const onSettings = () => location.hash.startsWith("#/settings");
+
+function settingsTab() {
+  if (location.hash === "#/settings/add") return "add";
+  if (location.hash === "#/settings/downloads") return "downloads";
+  return "subs";
+}
+
 function currentShow() {
   const m = location.hash.match(/^#\/show\/(.+)$/);
   return m ? decodeURIComponent(m[1]) : null;
 }
 
 function render() {
-  const inSettings = location.hash === "#/settings";
+  const inSettings = onSettings();
   const showName = currentShow();
   const shows = groupShows(episodes);
   const show = showName && shows.find((s) => s.name === showName);
@@ -307,6 +315,15 @@ function downloadButton(ep) {
 }
 
 function renderSettings() {
+  const tab = settingsTab();
+  document.querySelectorAll(".tabs a").forEach((a) => {
+    const active = a.dataset.tab === tab;
+    a.classList.toggle("active", active);
+    a.setAttribute("aria-current", active ? "page" : "false");
+  });
+  document.querySelectorAll(".tab-panel").forEach((panel) => {
+    panel.hidden = panel.dataset.panel !== tab;
+  });
   renderSubscriptions();
   if (!canOffline) {
     $("dl-count").textContent = "Unavailable";
@@ -336,7 +353,8 @@ let subs = []; // from /api/shows; null when the server can't be reached
 let queueInfo = null; // from /api/queue
 let subsTimer = null;
 const confirming = new Set(); // show ids waiting for a second tap on Remove
-const refreshing = new Set(); // show ids whose refresh spinner is showing
+let expanded = null; // id of the subscription row that's open, showing its actions
+let showSubForm = false; // the subscribe form, behind "+ Add" once you have subscriptions
 
 function ago(ts) {
   if (!ts) return "never";
@@ -376,7 +394,7 @@ function dueCount() {
 // Poll quickly while the server is busy so progress shows up; slowly otherwise.
 function scheduleSubscriptionsRefresh() {
   clearTimeout(subsTimer);
-  if (location.hash !== "#/settings") return;
+  if (!onSettings()) return;
   const busy = queueInfo && (queueInfo.worker.activity !== "idle" || dueCount() > 0);
   subsTimer = setTimeout(() => {
     loadSubscriptions();
@@ -414,69 +432,111 @@ function workerStatus() {
   return subs && subs.length ? `${text} · next check ${until(w.next_poll)}` : text;
 }
 
+const FILTER_AFTER = 6; // show the filter box once there are more subscriptions than this
+
 function renderSubscriptions() {
+  const have = !!(subs && subs.length);
+  const none = !!(subs && !subs.length);
+
+  const formOpen = showSubForm || none;
+  $("sub-form").hidden = !formOpen;
+  $("sub-empty").hidden = !none;
+  const toggle = $("sub-add-toggle");
+  toggle.hidden = !have;
+  toggle.textContent = showSubForm ? "Cancel" : "+ Add";
+  toggle.setAttribute("aria-expanded", String(formOpen));
+
+  const filterEl = $("sub-filter");
+  filterEl.hidden = !(subs && subs.length > FILTER_AFTER);
+  $("sub-count").hidden = !filterEl.hidden;
+  $("sub-count").textContent = have ? plural(subs.length, "subscription") : "";
+
+  const status = workerStatus();
+  $("sub-status").textContent = status;
+  $("download-all").hidden = !have;
+  $("sub-statusbar").hidden = !status && !have;
+
   const list = $("sub-list");
-  $("sub-status").textContent = workerStatus();
-  if (!subs || !subs.length) {
-    list.hidden = true;
-    return;
-  }
-  list.hidden = false;
-  list.replaceChildren(
-    ...subs.map(subscriptionRow),
-    h("button", { class: "row-btn", onclick: downloadNow }, "Check & download now"));
+  list.hidden = !have;
+  if (!have) return;
+  const q = filterEl.hidden ? "" : filterEl.value.trim().toLowerCase();
+  const shown = q ? subs.filter((s) => s.name.toLowerCase().includes(q)) : subs;
+  list.replaceChildren(...(shown.length
+    ? shown.map(subscriptionRow)
+    : [h("p", { class: "sub-none" }, "No subscriptions match.")]));
+}
+
+function subscriptionArt(s) {
+  return episodes.find((ep) => ep.show_id === s.id && ep.thumb_url)?.thumb_url;
 }
 
 function subscriptionRow(s) {
-  const meta = [
-    plural(s.episodes, "episode"),
-    s.queued ? `${s.queued} queued` : null,
-    s.mode === "video" ? "video" : null,
-  ].filter(Boolean).join(" · ");
-  const detail = [
-    s.keep_last > 0 ? `Keeps ${s.keep_last}` : "Keeps all",
-    `checked ${ago(s.last_checked)}`,
-  ].join(" · ");
+  const open = expanded === s.id;
   const waiting = retrying(s.id);
   let warn = null;
   if (s.last_error) warn = friendlyError(s.last_error);
   else if (waiting.length) warn = `Retrying ${waiting.length}: ${friendlyError(waiting[0].error)}`;
   else if (s.failed) warn = `${plural(s.failed, "download")} failed`;
+
+  const status = [
+    s.queued ? `${s.queued} queued` : plural(s.episodes, "episode"),
+    `checked ${ago(s.last_checked)}`,
+  ].join(" · ");
+  const detail = [
+    `${plural(s.episodes, "episode")} downloaded`,
+    s.keep_last > 0 ? `keeps the latest ${s.keep_last}` : "keeps everything",
+    s.mode,
+  ].join(" · ");
+  const art = subscriptionArt(s);
+  const busy = queueInfo?.worker.override_shows?.includes(s.id);
   const isConfirming = confirming.has(s.id);
 
-  return h("div", { class: "sub-row" },
-    h("div", { class: "sub-text" },
-      h("span", { class: "sub-name" }, s.name),
-      h("span", { class: "sub-meta" }, meta),
-      h("span", { class: "sub-meta faint" }, detail),
-      warn ? h("span", { class: "sub-warn" }, warn) : null),
-    h("div", { class: "sub-actions" },
-      h("button", {
-        class: `icon-btn sm${refreshing.has(s.id) ? " spin" : ""}`,
-        "aria-label": `Check ${s.name} for new episodes`,
-        onclick: () => refreshShow(s),
-      }, icon("refresh")),
-      h("button", {
-        class: `text-btn${isConfirming ? " confirm" : ""}`,
-        "aria-label": isConfirming ? `Confirm unsubscribing from ${s.name}` : `Unsubscribe from ${s.name}`,
-        onclick: () => removeShow(s),
-      }, isConfirming ? "Confirm" : "Remove")));
+  return h("div", { class: `sub-row${open ? " open" : ""}` },
+    h("button", {
+      class: "sub-head",
+      "aria-expanded": String(open),
+      onclick: () => {
+        expanded = open ? null : s.id;
+        renderSubscriptions();
+      },
+    },
+      art
+        ? h("img", { class: "sub-art", src: art, alt: "", loading: "lazy" })
+        : h("span", { class: "sub-art letter", "aria-hidden": "true" }, s.name.slice(0, 1).toUpperCase()),
+      h("span", { class: "sub-text" },
+        h("span", { class: "sub-name" }, s.name),
+        h("span", { class: "sub-meta" }, status),
+        warn ? h("span", { class: "sub-warn" }, warn) : null),
+      h("span", { class: "chev" }, icon("chevronDown"))),
+    open
+      ? h("div", { class: "sub-body" },
+          h("p", { class: "sub-detail" }, detail),
+          h("div", { class: "sub-buttons" },
+            h("button", {
+              class: "pill strong",
+              disabled: busy,
+              onclick: () => downloadShowNow(s),
+            }, busy ? "Downloading…" : "Check & download now"),
+            h("button", {
+              class: `pill${isConfirming ? " confirm" : ""}`,
+              onclick: () => removeShow(s),
+            }, isConfirming ? "Tap again to remove" : "Remove")))
+      : null);
 }
 
-async function refreshShow(s) {
-  refreshing.add(s.id);
-  renderSubscriptions();
+// Check one show and download its queue now, even outside the server's active hours.
+async function downloadShowNow(s) {
   try {
-    await fetch(`/api/shows/${s.id}/refresh`, { method: "POST" });
-  } catch {}
-  setTimeout(() => {
-    refreshing.delete(s.id);
-    loadSubscriptions();
-  }, 4000);
+    const res = await fetch(`/api/shows/${s.id}/download-now`, { method: "POST" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    setStatus(`Checking ${s.name} and downloading now…`);
+  } catch (err) {
+    setStatus(`Couldn't start: ${err.message}`);
+  }
+  setTimeout(loadSubscriptions, 2500);
 }
 
-// Check every show and download what's queued now, even outside the server's
-// active hours.
+// Check every show and download what's queued now, even outside active hours.
 async function downloadNow() {
   try {
     await fetch("/api/download-now", { method: "POST" });
@@ -486,6 +546,14 @@ async function downloadNow() {
   }
   setTimeout(loadSubscriptions, 3000);
 }
+
+$("download-all").addEventListener("click", downloadNow);
+$("sub-filter").addEventListener("input", renderSubscriptions);
+$("sub-add-toggle").addEventListener("click", () => {
+  showSubForm = !showSubForm;
+  renderSubscriptions();
+  if (showSubForm) $("sub-url").focus();
+});
 
 async function removeShow(s) {
   if (!confirming.has(s.id)) {
@@ -498,6 +566,7 @@ async function removeShow(s) {
     return;
   }
   confirming.delete(s.id);
+  if (expanded === s.id) expanded = null;
   try {
     const res = await fetch(`/api/shows/${s.id}`, { method: "DELETE" });
     if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`);
@@ -525,6 +594,7 @@ $("sub-form").addEventListener("submit", async (e) => {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
     $("sub-url").value = "";
+    showSubForm = false;
     setStatus(`Subscribed to ${data.name}. Fetching the latest episodes…`, 5000);
     loadSubscriptions();
   } catch (err) {
@@ -635,11 +705,21 @@ function play(ep) {
 }
 
 function openSheet() {
-  $("sheet").classList.add("open");
-  $("sheet").setAttribute("aria-hidden", "false");
+  const el = $("sheet");
+  if (el.classList.contains("open")) return;
+  el.setAttribute("aria-hidden", "false");
+  // Safari skips the slide-up if the sheet goes from hidden to open in one step:
+  // make it renderable (still off-screen) first, then open it a frame later.
+  el.style.visibility = "visible";
+  el.getBoundingClientRect();
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    el.classList.add("open");
+    el.style.visibility = "";
+  }));
 }
 
 function closeSheet() {
+  closeSleepMenu();
   $("sheet").classList.remove("open");
   $("sheet").setAttribute("aria-hidden", "true");
 }
@@ -650,8 +730,8 @@ let drag = null;
 const sheetEl = $("sheet");
 
 sheetEl.addEventListener("touchstart", (e) => {
-  // Leave the scrubber and the video's own controls alone.
-  if (e.touches.length !== 1 || e.target.closest("input, video")) return;
+  // Leave the scrubber, the video's own controls and the sleep menu alone.
+  if (e.touches.length !== 1 || e.target.closest("input, video, .popover, #sleep-backdrop")) return;
   drag = { y: e.touches[0].clientY, t: Date.now(), dy: 0 };
 }, { passive: true });
 
@@ -678,47 +758,75 @@ sheetEl.addEventListener("touchcancel", endDrag);
 
 // ---- sleep timer --------------------------------------------------------------
 
-const SLEEP_STEPS = [0, 15, 30, 45, 60, "end"]; // minutes, or the end of the episode
-let sleepStep = 0;
-let sleepAt = null; // wall-clock deadline for timed steps
+const SLEEP_OPTIONS = [
+  { label: "When episode ends", value: "end" },
+  { label: "1 hour", value: 60 },
+  { label: "45 minutes", value: 45 },
+  { label: "30 minutes", value: 30 },
+  { label: "15 minutes", value: 15 },
+  { label: "10 minutes", value: 10 },
+  { label: "5 minutes", value: 5 },
+  { label: "Off", value: 0 },
+];
+let sleepValue = 0; // 0 (off), minutes, or "end"
+let sleepAt = null; // wall-clock deadline for timed choices
 
 function syncSleep() {
-  const step = SLEEP_STEPS[sleepStep];
   const btn = $("sleep");
   let label = "";
-  if (step === "end") label = "End";
-  else if (step) label = `${Math.max(1, Math.ceil((sleepAt - Date.now()) / 60000))}m`;
+  if (sleepValue === "end") label = "End";
+  else if (sleepValue) label = `${Math.max(1, Math.ceil((sleepAt - Date.now()) / 60000))}m`;
   btn.innerHTML = svg("moon");
   if (label) btn.append(label);
-  btn.classList.toggle("on", step !== 0);
-  btn.setAttribute("aria-label", step === 0 ? "Sleep timer: off"
-    : step === "end" ? "Sleep timer: end of episode" : `Sleep timer: ${label} left`);
+  btn.classList.toggle("on", sleepValue !== 0);
+  btn.setAttribute("aria-label", sleepValue === 0 ? "Sleep timer: off"
+    : sleepValue === "end" ? "Sleep timer: end of episode" : `Sleep timer: ${label} left`);
 }
 
-function clearSleep() {
-  sleepStep = 0;
-  sleepAt = null;
+function setSleep(value) {
+  sleepValue = value;
+  sleepAt = typeof value === "number" && value ? Date.now() + value * 60000 : null;
   syncSleep();
 }
 
 function checkSleep() {
   if (sleepAt && Date.now() >= sleepAt) {
     media.pause();
-    clearSleep();
+    setSleep(0);
     setStatus("Sleep timer ended");
   } else if (sleepAt) {
     syncSleep(); // keep the minutes left current
   }
 }
 
+function openSleepMenu() {
+  $("sleep-menu").replaceChildren(...SLEEP_OPTIONS.map((opt) => {
+    const checked = opt.value === sleepValue;
+    return h("button", {
+      class: "popover-item",
+      role: "menuitemradio",
+      "aria-checked": String(checked),
+      onclick: () => {
+        setSleep(opt.value);
+        closeSleepMenu();
+      },
+    }, h("span", { class: "popover-check" }, checked ? icon("check") : null), opt.label);
+  }));
+  $("sleep-menu").hidden = false;
+  $("sleep-backdrop").hidden = false;
+  $("sleep").setAttribute("aria-expanded", "true");
+}
+
+function closeSleepMenu() {
+  $("sleep-menu").hidden = true;
+  $("sleep-backdrop").hidden = true;
+  $("sleep").setAttribute("aria-expanded", "false");
+}
+
 $("sleep").addEventListener("click", () => {
-  sleepStep = (sleepStep + 1) % SLEEP_STEPS.length;
-  const step = SLEEP_STEPS[sleepStep];
-  sleepAt = typeof step === "number" && step ? Date.now() + step * 60000 : null;
-  syncSleep();
-  setStatus(step === 0 ? "Sleep timer off"
-    : step === "end" ? "Sleep at the end of this episode" : `Sleep in ${step} minutes`, 2000);
+  $("sleep-menu").hidden ? openSleepMenu() : closeSleepMenu();
 });
+$("sleep-backdrop").addEventListener("click", closeSleepMenu);
 
 // timeupdate keeps firing while audio plays in the background, unlike timers
 // that iOS may slow down, so check the deadline there too.
@@ -790,7 +898,9 @@ $("speed").addEventListener("click", () => {
 });
 $("seek").addEventListener("input", (e) => { media.currentTime = Number(e.target.value); });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") closeSheet();
+  if (e.key !== "Escape") return;
+  if (!$("sleep-menu").hidden) closeSleepMenu();
+  else closeSheet();
 });
 
 media.addEventListener("play", syncPlayButtons);
@@ -804,7 +914,7 @@ media.addEventListener("pause", () => {
 });
 media.addEventListener("ended", () => {
   markCurrentDone();
-  if (SLEEP_STEPS[sleepStep] === "end") clearSleep();
+  if (sleepValue === "end") setSleep(0);
 });
 media.addEventListener("loadedmetadata", () => {
   $("seek").max = Math.floor(media.duration);
@@ -877,7 +987,7 @@ function onRoute() {
   visitSnapshot.clear();
   render();
   window.scrollTo(0, 0);
-  if (location.hash === "#/settings") loadSubscriptions();
+  if (onSettings()) loadSubscriptions();
   else clearTimeout(subsTimer);
 }
 
@@ -900,9 +1010,9 @@ setInterval(() => {
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
   loadLibrary(true);
-  if (location.hash === "#/settings") loadSubscriptions();
+  if (onSettings()) loadSubscriptions();
 });
-if (location.hash === "#/settings") loadSubscriptions();
+if (onSettings()) loadSubscriptions();
 window.addEventListener("online", render);
 window.addEventListener("offline", render);
 if (canOffline) navigator.serviceWorker.register("sw.js");

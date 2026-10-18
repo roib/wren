@@ -256,15 +256,20 @@ def _download_queue(show: dict) -> int:
     return done
 
 
-def download_next() -> bool:
-    """Download the oldest queued item that's due, across all enabled shows.
-    Returns False when there was nothing to do."""
+def download_next(show_ids: list[int] | None = None) -> bool:
+    """Download the oldest queued item that's due, across all enabled shows
+    (or only the given ones). Returns False when there was nothing to do."""
     now = _now()
+    only = ""
+    params: list = [now]
+    if show_ids is not None:
+        only = f" AND s.id IN ({','.join('?' * len(show_ids))})" if show_ids else " AND 0"
+        params += list(show_ids)
     with db.connect() as conn:
         row = conn.execute(
-            """SELECT f.*, s.id AS sid FROM feed_items f JOIN shows s ON s.id = f.show_id
-               WHERE f.status = 'queued' AND f.next_try <= ? AND s.enabled = 1
-               ORDER BY f.rowid LIMIT 1""", (now,)).fetchone()
+            f"""SELECT f.*, s.id AS sid FROM feed_items f JOIN shows s ON s.id = f.show_id
+                WHERE f.status = 'queued' AND f.next_try <= ? AND s.enabled = 1{only}
+                ORDER BY f.rowid LIMIT 1""", params).fetchone()
         if not row:
             return False
         # Claim it, so a concurrent `wren sync` (or a second worker) leaves it alone.
