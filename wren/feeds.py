@@ -19,6 +19,9 @@ import yt_dlp
 from . import ytdl
 
 LIST_LIMIT = 15  # how many of the newest videos to look at per check
+# Other playlists may be in any order (often oldest first), so look at more of
+# them and sort newest first using the channel's uploads.
+PLAYLIST_LIMIT = 200
 USER_AGENT = "Mozilla/5.0 (compatible; wren/0.1)"
 
 
@@ -38,14 +41,37 @@ class Feed:
     items: list[FeedItem]  # newest first
 
 
-def _ydl() -> yt_dlp.YoutubeDL:
+def _ydl(limit: int = LIST_LIMIT) -> yt_dlp.YoutubeDL:
     return yt_dlp.YoutubeDL({
         **ytdl.base_opts(),
         "quiet": True,
         "extract_flat": "in_playlist",
-        "playlistend": LIST_LIMIT,
+        "playlistend": limit,
         "skip_download": True,
     })
+
+
+def _list_id(feed_url: str) -> str:
+    return urllib.parse.parse_qs(urllib.parse.urlparse(feed_url).query).get("list", [""])[0]
+
+
+def _newest_first(entries: list[dict], channel_id: str | None) -> list[dict]:
+    """Put a playlist's entries newest first. Flat listings carry no dates, so
+    compare against the channel's uploads (newest first): if the playlist's
+    videos appear there in reverse order, the playlist runs oldest first."""
+    if not channel_id or len(entries) < 2:
+        return entries
+    with _ydl(50) as ydl:
+        uploads = ydl.extract_info(_playlist_url("UU" + channel_id[2:]), download=False)
+    rank = {e["id"]: n for n, e in enumerate(uploads.get("entries") or []) if e and e.get("id")}
+    ranks = [rank[e["id"]] for e in entries if e.get("id") in rank]
+    if len(ranks) < 2:
+        # None of the playlist is among the recent uploads: the end that's
+        # newest can't be told, unless the playlist's last video is the newest
+        # thing we know about. Keep the playlist's order.
+        return entries
+    rising = sum(b > a for a, b in zip(ranks, ranks[1:]))
+    return entries if rising >= len(ranks) - 1 - rising else list(reversed(entries))
 
 
 def _playlist_url(list_id: str) -> str:
@@ -105,11 +131,19 @@ def thumb_url(video_id: str) -> str:
 
 
 def fetch(feed_url: str) -> Feed:
-    with _ydl() as ydl:
+    uploads = _list_id(feed_url).startswith("UU")
+    with _ydl(LIST_LIMIT if uploads else PLAYLIST_LIMIT) as ydl:
         info = ydl.extract_info(feed_url, download=False)
 
+    entries = [e for e in info.get("entries") or [] if e and e.get("id")]
+    if not uploads:
+        try:
+            entries = _newest_first(entries, info.get("channel_id"))
+        except Exception:
+            pass  # keep the playlist's own order
+
     items = []
-    for entry in info.get("entries") or []:
+    for entry in entries:
         if not entry or not entry.get("id"):
             continue
         items.append(FeedItem(
@@ -121,7 +155,15 @@ def fetch(feed_url: str) -> Feed:
             thumb_url=thumb_url(entry["id"]),
         ))
 
-    list_id = urllib.parse.parse_qs(urllib.parse.urlparse(feed_url).query).get("list", [""])[0]
-    # "Uploads from X" reads badly as a show name; use the channel name instead.
-    title = info.get("channel") if list_id.startswith("UU") else info.get("title")
-    return Feed(title=title or info.get("uploader") or list_id, items=items)
+    channel = info.get("channel") or info.get("uploader")
+    if uploads:
+        # "Uploads from X" reads badly as a show name; use the channel name instead.
+        title = channel
+    else:
+        # A playlist called "Full Episodes" needs its channel's name to make sense.
+        # ("Huberman Lab Essentials" already says whose it is.)
+        title = info.get("title")
+        words = [w for w in re.findall(r"\w+", (channel or "").lower()) if len(w) > 3]
+        if title and channel and not any(w in title.lower() for w in words):
+            title = f"{channel}: {title}"
+    return Feed(title=title or channel or _list_id(feed_url), items=items)

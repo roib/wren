@@ -634,7 +634,7 @@ async function retryJob(e) {
 
 // ---- add ------------------------------------------------------------------------
 
-const add = { url: "", shared: null, busy: false, result: null, error: null, epMode: "audio", subMode: "audio", backfill: 3 };
+const add = { url: "", shared: null, busy: false, result: null, error: null, epMode: "audio", subs: {} };
 
 function addView(params) {
   // A link from the "Share to Wren" shortcut: look it up straight away.
@@ -685,20 +685,24 @@ async function lookup() {
   if (route().name === "add") render();
 }
 
-// `key` is the add-state field it sets: epMode (single episode) or subMode (subscription).
-function modePicker(key) {
+// Radio pickers write into `state[key]`; `name` keeps several groups on one
+// page apart (the episode, a playlist and a channel can all be offered at once).
+function modePicker(state, key, name) {
   return h("div", { class: "segmented", role: "radiogroup", "aria-label": "Format" },
     ["audio", "video"].map((m) => h("label", {},
-      h("input", { type: "radio", name: key, value: m, checked: add[key] === m, onchange: () => { add[key] = m; } }),
+      h("input", { type: "radio", name, value: m, checked: state[key] === m, onchange: () => { state[key] = m; } }),
       h("span", {}, m === "audio" ? "Audio" : "Video"))));
 }
 
-function backfillPicker() {
+function backfillPicker(state, name) {
   return h("div", { class: "segmented four", role: "radiogroup", "aria-label": "Episodes to download now" },
     [1, 3, 5, 10].map((n) => h("label", {},
-      h("input", { type: "radio", name: "backfill", value: n, checked: add.backfill === n, onchange: () => { add.backfill = n; } }),
+      h("input", { type: "radio", name, value: n, checked: state.backfill === n, onchange: () => { state.backfill = n; } }),
       h("span", {}, String(n)))));
 }
+
+// Each show offered keeps its own format and backfill choice.
+const subChoice = (url) => (add.subs[url] ??= { mode: "audio", backfill: 3 });
 
 function subscribeBlock(url, name, subscribed) {
   if (subscribed) {
@@ -706,9 +710,10 @@ function subscribeBlock(url, name, subscribed) {
       icon("check"), h("span", { class: "row-text" }, `Already subscribed to ${subscribed.name}`),
       h("span", { class: "chev" }, icon("chevronRight")));
   }
+  const choice = subChoice(url);
   return h("div", { class: "choice" },
-    h("div", { class: "field-label" }, "Format"), modePicker("subMode"),
-    h("div", { class: "field-label" }, "Download the latest"), backfillPicker(),
+    h("div", { class: "field-label" }, "Format"), modePicker(choice, "mode", `mode-${url}`),
+    h("div", { class: "field-label" }, "Download the latest"), backfillPicker(choice, `backfill-${url}`),
     h("button", { class: "primary", onclick: (e) => subscribe(url, name, e.currentTarget) }, `Subscribe to ${name}`));
 }
 
@@ -728,9 +733,12 @@ function resultView(r) {
         h("div", { class: "row-text" },
           h("div", { class: "result-title" }, r.title),
           h("div", { class: "row-meta" }, join(r.channel, fmtDuration(r.duration))))),
-      modePicker("epMode"),
+      modePicker(add, "epMode", "ep-mode"),
       h("button", { class: "button strong full", onclick: (e) => addEpisode(r.url, e.currentTarget) }, "Add just this episode"))),
-    r.channel_url ? section("Whole show", h("div", { class: "card result" },
+    r.playlist ? section("Playlist", h("div", { class: "card result" },
+      r.playlist.subscribed ? null : h("div", { class: "result-title" }, r.playlist.title),
+      subscribeBlock(r.playlist.url, r.playlist.title, r.playlist.subscribed))) : null,
+    r.channel_url ? section("Whole channel", h("div", { class: "card result" },
       r.subscribed ? null : h("div", { class: "result-title" }, r.channel),
       subscribeBlock(r.channel_url, r.channel, r.subscribed))) : null);
 }
@@ -739,9 +747,10 @@ async function subscribe(url, name, btn) {
   btn.disabled = true;
   btn.textContent = "Subscribing…";
   try {
-    const show = await api("/api/shows", { method: "POST", body: { url, mode: add.subMode, backfill: add.backfill } });
-    toast(`Subscribed to ${show.name}. Downloading the latest ${add.backfill}.`, 5000);
-    Object.assign(add, { url: "", result: null, error: null });
+    const { mode, backfill } = subChoice(url);
+    const show = await api("/api/shows", { method: "POST", body: { url, mode, backfill } });
+    toast(`Subscribed to ${show.name}. Downloading the latest ${backfill}.`, 5000);
+    Object.assign(add, { url: "", result: null, error: null, subs: {} });
     navigate(`#/show/${show.id}`);
   } catch (err) {
     btn.disabled = false;
@@ -755,7 +764,7 @@ async function addEpisode(url, btn) {
   try {
     await api("/api/add", { method: "POST", body: { url, mode: add.epMode } });
     toast(`Downloading the ${add.epMode}…`, 4000);
-    Object.assign(add, { url: "", result: null, error: null });
+    Object.assign(add, { url: "", result: null, error: null, subs: {} });
     navigate("#/singles");
   } catch (err) {
     btn.disabled = false;

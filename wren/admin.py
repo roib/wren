@@ -195,6 +195,20 @@ def _subscribed(feed_url: str) -> dict | None:
     return dict(row) if row else None
 
 
+def _playlist_choice(video_url: str) -> dict | None:
+    """The playlist a shared video was opened from (…watch?v=…&list=PL…), so it
+    can be followed instead of the whole channel. Mixes and Watch Later aren't shows."""
+    list_id = urllib.parse.parse_qs(urllib.parse.urlparse(video_url).query).get("list", [""])[0]
+    if not list_id.startswith(("PL", "OL")):
+        return None
+    url = f"https://www.youtube.com/playlist?list={list_id}"
+    try:
+        feed = feeds.fetch(url)
+    except Exception:
+        return None
+    return {"url": url, "title": feed.title, "episodes": len(feed.items), "subscribed": _subscribed(url)}
+
+
 def resolve(url: str) -> dict:
     """Work out what a pasted YouTube link is: a show (channel or playlist), with a
     preview of its latest episodes, or a single video and the channel it's from."""
@@ -204,15 +218,19 @@ def resolve(url: str) -> dict:
         raise ValueError("Paste a YouTube channel, playlist or video link.")
     # A video inside a playlist link: treat as the video (its playlist is rarely the show).
     if _is_video(url):
+        # A …watch?v=…&list=… link means this video (its playlist is offered separately).
+        vid = urllib.parse.parse_qs(p.query).get("v", [None])[0]
+        video_url = f"https://www.youtube.com/watch?v={vid}" if vid else url
         opts = {**ytdl.base_opts(), "quiet": True, "no_warnings": True, "skip_download": True}
         with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=False, process=False)
+            info = ydl.extract_info(video_url, download=False, process=False)
         channel_url = info.get("channel_url") or (
             f"https://www.youtube.com/channel/{info['channel_id']}" if info.get("channel_id") else None)
         feed_url = feeds.feed_url_for(channel_url) if channel_url else None
         return {
+            "playlist": _playlist_choice(url),
             "kind": "video",
-            "url": info.get("webpage_url") or url,
+            "url": info.get("webpage_url") or video_url,
             "title": info.get("title"),
             "channel": info.get("channel") or info.get("uploader"),
             "channel_url": channel_url,
