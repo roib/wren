@@ -2,7 +2,7 @@ import argparse
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="oddo")
+    parser = argparse.ArgumentParser(prog="wren")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_add = sub.add_parser("add", help="download a single video/episode")
@@ -25,7 +25,7 @@ def main() -> None:
     elif args.cmd == "serve":
         import uvicorn
 
-        uvicorn.run("oddo.server:app", host=args.host, port=args.port)
+        uvicorn.run("wren.server:app", host=args.host, port=args.port)
     elif args.cmd == "list":
         from .db import list_episodes
 

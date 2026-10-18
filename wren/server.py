@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from . import db, downloader
 from .config import MEDIA_DIR, WEB_DIR
 
-app = FastAPI(title="oddo")
+app = FastAPI(title="wren")
 
 # Simple in-memory job status; good enough until there's a real queue.
 jobs: dict[str, dict] = {}

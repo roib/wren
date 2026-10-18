@@ -1,7 +1,7 @@
 const $ = (id) => document.getElementById(id);
 const media = $("media");
 const SPEEDS = [1, 1.25, 1.5, 1.75, 2];
-const MEDIA_CACHE = "oddo-media-v1"; // must match sw.js
+const MEDIA_CACHE = "wren-media-v1"; // must match sw.js
 const DONE_AT = 0.97; // fraction of duration that counts as "played"
 const RING = 2 * Math.PI * 8; // circumference of the download progress ring
 

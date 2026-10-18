@@ -3,9 +3,9 @@
 // - /api/library: network first, cache fallback (episode list works offline)
 // - /media/*: served from the media cache when downloaded, with Range support
 //   (Safari requires 206 responses to play/seek audio and video)
-const SHELL = "oddo-shell-v2";
-const DATA = "oddo-data-v1";
-const MEDIA = "oddo-media-v1"; // must match app.js
+const SHELL = "wren-shell-v2";
+const DATA = "wren-data-v1";
+const MEDIA = "wren-media-v1"; // must match app.js
 const SHELL_FILES = [
   "/", "/index.html", "/app.js", "/style.css", "/manifest.webmanifest", "/icon-180.png",
 ];

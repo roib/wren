@@ -1,5 +1,5 @@
 [project]
-name = "oddo"
+name = "wren"
 version = "0.1.0"
 description = "Self-hosted show downloader + podcast/video player PWA"
 requires-python = ">=3.11"
@@ -10,11 +10,11 @@ dependencies = [
 ]
 
 [project.scripts]
-oddo = "oddo.cli:main"
+wren = "wren.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["oddo"]
+packages = ["wren"]
