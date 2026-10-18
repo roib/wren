@@ -1,5 +1,17 @@
 const $ = (id) => document.getElementById(id);
-const media = $("media");
+// Audio episodes play through <audio>, which iOS keeps playing in the background;
+// video episodes use <video>. `media` is whichever one the current episode uses.
+const videoEl = $("media");
+const audioEl = $("audio");
+let media = audioEl;
+
+// Listen on both elements, but only react to the one that's active, so a
+// switch between them can't save or show the wrong episode's state.
+function onMedia(type, handler) {
+  for (const el of [audioEl, videoEl]) {
+    el.addEventListener(type, (e) => { if (e.target === media) handler(e); });
+  }
+}
 const SPEEDS = [1, 1.25, 1.5, 1.75, 2];
 const MEDIA_CACHE = "wren-media-v1"; // must match sw.js
 const DONE_AT = 0.97; // fraction of duration that counts as "played"
@@ -772,9 +784,18 @@ function play(ep) {
     return;
   }
   if (isDone(ep)) setDone(ep, false); // replaying a finished episode starts it over
+  if (current && !isDone(current)) setPos(current, media.currentTime); // remember where we left off
   current = ep;
 
   const isVideo = ep.mode === "video";
+  const next = isVideo ? videoEl : audioEl;
+  if (next !== media) {
+    // Stop and unload the other element before switching.
+    media.pause();
+    media.removeAttribute("src");
+    media.load();
+    media = next;
+  }
   $("mini").hidden = false;
   document.body.classList.add("has-player");
   $("sheet").classList.toggle("is-video", isVideo);
@@ -784,7 +805,7 @@ function play(ep) {
   $("sheet-title").textContent = ep.title;
   $("sheet-channel").textContent = ep.channel ?? "";
   $("sheet-art").src = ep.thumb_url ?? "";
-  media.poster = isVideo ? (ep.thumb_url ?? "") : "";
+  if (isVideo) videoEl.poster = ep.thumb_url ?? "";
   media.src = ep.media_url;
   media.playbackRate = Number(lsGet("speed")) || 1;
 
@@ -1058,26 +1079,26 @@ document.addEventListener("keydown", (e) => {
   else closeSheet();
 });
 
-media.addEventListener("play", syncPlayButtons);
-media.addEventListener("ratechange", syncSpeed);
-media.addEventListener("pause", () => {
+onMedia("play", syncPlayButtons);
+onMedia("ratechange", syncSpeed);
+onMedia("pause", () => {
   syncPlayButtons();
   if (current && !isDone(current)) {
     setPos(current, media.currentTime);
     render();
   }
 });
-media.addEventListener("ended", () => {
+onMedia("ended", () => {
   markCurrentDone();
   if (sleepValue === "end") setSleep(0);
 });
-media.addEventListener("loadedmetadata", () => {
+onMedia("loadedmetadata", () => {
   $("seek").setAttribute("aria-valuemax", String(Math.floor(media.duration)));
   syncTime();
 });
 
 let lastSave = 0;
-media.addEventListener("timeupdate", () => {
+onMedia("timeupdate", () => {
   syncTime();
   checkSleep();
   if (!current || isDone(current)) return;
