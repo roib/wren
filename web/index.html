@@ -29,6 +29,18 @@
     <ul id="list"></ul>
 
     <section id="settings" hidden>
+      <h2>Subscriptions</h2>
+      <form id="sub-form" class="card">
+        <input id="sub-url" type="url" placeholder="YouTube channel or playlist URL" required autocomplete="off">
+        <div class="segmented" role="radiogroup" aria-label="Format">
+          <label><input type="radio" name="sub-mode" value="audio" checked><span>Audio</span></label>
+          <label><input type="radio" name="sub-mode" value="video"><span>Video</span></label>
+        </div>
+        <button type="submit" class="primary" id="sub-submit">Subscribe</button>
+      </form>
+      <div class="card list-card" id="sub-list" hidden></div>
+      <p class="hint" id="sub-status"></p>
+
       <h2>Add episode</h2>
       <form id="add-form" class="card">
         <input id="add-url" type="url" placeholder="Paste a video URL" required autocomplete="off">

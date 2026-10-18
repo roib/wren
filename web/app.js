@@ -27,6 +27,7 @@ const ICONS = {
   chevronLeft: '<path d="M14.5 5.5 8 12l6.5 6.5"/>',
   chevronRight: '<path d="M9.5 5.5 16 12l-6.5 6.5"/>',
   chevronDown: '<path d="M5.5 9 12 15.5 18.5 9"/>',
+  refresh: '<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4h-4"/>',
 };
 
 function svg(name) {
@@ -120,9 +121,39 @@ function setDone(ep, done) {
   setPos(ep, 0);
 }
 
+// "New" = arrived since you last opened that show. When a show page opens we
+// remember the previous visit time for as long as you stay on it, so the
+// markers don't vanish the moment you look at them.
+const visitSnapshot = new Map(); // show name -> previous visit time
+const seenKey = (name) => `seen:${name}`;
+
+function seenSince() {
+  // Before the first visit to a show, count from when this device first ran
+  // the app, so an existing library doesn't all show up as new.
+  let t = Number(lsGet("seenSince"));
+  if (!t) {
+    t = Math.floor(Date.now() / 1000);
+    lsSet("seenSince", String(t));
+  }
+  return t;
+}
+
+function seenAt(name) {
+  if (visitSnapshot.has(name)) return visitSnapshot.get(name);
+  return Number(lsGet(seenKey(name))) || seenSince();
+}
+
+const isNew = (ep, showName) => !isDone(ep) && ep.added_at > seenAt(showName);
+
+function markVisited(name) {
+  if (visitSnapshot.has(name)) return;
+  visitSnapshot.set(name, seenAt(name));
+  lsSet(seenKey(name), String(Math.floor(Date.now() / 1000)));
+}
+
 // ---- data -----------------------------------------------------------------
 
-async function loadLibrary() {
+async function loadLibrary(quiet = false) {
   try {
     const res = await fetch("/api/library");
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -130,7 +161,7 @@ async function loadLibrary() {
     lsSet("library", JSON.stringify(episodes)); // fallback for offline launches
   } catch {
     try { episodes = JSON.parse(lsGet("library")) || []; } catch { episodes = []; }
-    setStatus("Offline — downloaded episodes still play", 5000);
+    if (!quiet) setStatus("Offline — downloaded episodes still play", 5000);
   }
   await loadDownloaded();
   render();
@@ -148,7 +179,7 @@ async function loadDownloaded() {
 function groupShows(eps) {
   const shows = new Map();
   for (const ep of eps) {
-    const name = ep.channel || "Unknown";
+    const name = ep.show || ep.channel || "Unknown";
     if (!shows.has(name)) shows.set(name, []);
     shows.get(name).push(ep);
   }
@@ -191,8 +222,9 @@ function render() {
     renderSettings();
     return;
   }
+  if (show) markVisited(show.name);
 
-  const items = show ? show.episodes.map(episodeRow) : shows.map(showRow);
+  const items = show ? show.episodes.map((ep) => episodeRow(ep, show.name)) : shows.map(showRow);
   if (!items.length) {
     items.push(h("li", { class: "empty" },
       h("p", {}, "No episodes yet."),
@@ -204,20 +236,22 @@ function render() {
 
 function showRow(show) {
   const unplayed = show.episodes.filter((ep) => !isDone(ep)).length;
+  const fresh = show.episodes.filter((ep) => isNew(ep, show.name)).length;
   const art = show.episodes.find((ep) => ep.thumb_url)?.thumb_url;
+  let sub = plural(show.episodes.length, "episode");
+  if (fresh) sub = `${fresh} new`;
+  else if (unplayed) sub = `${unplayed} unplayed`;
 
   return h("li", {},
     h("a", { class: "show", href: `#/show/${encodeURIComponent(show.name)}` },
       h("img", { src: art ?? "", alt: "", loading: "lazy" }),
       h("span", { class: "show-text" },
         h("span", { class: "show-name" }, show.name),
-        h("span", { class: "show-sub" },
-          unplayed ? h("span", { class: "dot" }) : null,
-          unplayed ? `${unplayed} unplayed` : plural(show.episodes.length, "episode"))),
+        h("span", { class: "show-sub" }, fresh ? h("span", { class: "dot" }) : null, sub)),
       h("span", { class: "chev" }, icon("chevronRight"))));
 }
 
-function episodeRow(ep) {
+function episodeRow(ep, showName) {
   const k = key(ep);
   const done = isDone(ep);
   const pos = getPos(ep);
@@ -238,6 +272,7 @@ function episodeRow(ep) {
     h("button", { class: "ep-main", onclick: () => play(ep) },
       h("span", { class: "ep-date" },
         isCurrent ? h("span", { class: "now" }, "Now playing · ") : null,
+        !isCurrent && isNew(ep, showName) ? h("span", { class: "new" }, "New · ") : null,
         [fmtDate(ep.upload_date), ep.mode === "video" ? "Video" : null].filter(Boolean).join(" · ")),
       h("span", { class: "ep-title" }, ep.title),
       h("span", { class: "ep-meta" },
@@ -271,6 +306,7 @@ function downloadButton(ep) {
 }
 
 function renderSettings() {
+  renderSubscriptions();
   if (!canOffline) {
     $("dl-count").textContent = "Unavailable";
     $("dl-usage").textContent = "—";
@@ -292,6 +328,202 @@ function renderSettings() {
     $("dl-usage").textContent = fmtBytes(usage);
   });
 }
+
+// ---- subscriptions -----------------------------------------------------------
+
+let subs = []; // from /api/shows; null when the server can't be reached
+let queueInfo = null; // from /api/queue
+let subsTimer = null;
+const confirming = new Set(); // show ids waiting for a second tap on Remove
+const refreshing = new Set(); // show ids whose refresh spinner is showing
+
+function ago(ts) {
+  if (!ts) return "never";
+  const m = Math.floor((Date.now() / 1000 - ts) / 60);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  if (m < 1440) return `${Math.floor(m / 60)}h ago`;
+  return `${Math.floor(m / 1440)}d ago`;
+}
+
+function until(ts) {
+  const m = Math.round((ts - Date.now() / 1000) / 60);
+  if (m <= 0) return "soon";
+  return m < 60 ? `in ${m} min` : `in ${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+async function loadSubscriptions() {
+  try {
+    const [s, q] = await Promise.all([fetch("/api/shows"), fetch("/api/queue")]);
+    if (!s.ok || !q.ok) throw new Error();
+    subs = await s.json();
+    queueInfo = await q.json();
+  } catch {
+    subs = null;
+    queueInfo = null;
+  }
+  renderSubscriptions();
+  scheduleSubscriptionsRefresh();
+}
+
+function dueCount() {
+  if (!queueInfo) return 0;
+  const now = Date.now() / 1000;
+  return queueInfo.jobs.length + queueInfo.items.filter((i) => i.next_try <= now + 5).length;
+}
+
+// Poll quickly while the server is busy so progress shows up; slowly otherwise.
+function scheduleSubscriptionsRefresh() {
+  clearTimeout(subsTimer);
+  if (location.hash !== "#/settings") return;
+  const busy = queueInfo && (queueInfo.worker.activity !== "idle" || dueCount() > 0);
+  subsTimer = setTimeout(() => {
+    loadSubscriptions();
+    if (busy) loadLibrary(true);
+  }, busy ? 5000 : 30000);
+}
+
+// Downloads that failed and are waiting to retry (premieres not yet aired don't count).
+function retrying(showId) {
+  if (!queueInfo) return [];
+  return queueInfo.items.filter((i) => i.error && i.error !== "upcoming"
+    && (showId === undefined || i.show_id === showId));
+}
+
+function friendlyError(err) {
+  if (/not a bot|Sign in to confirm/i.test(err)) return "YouTube wants to confirm the server isn't a bot (set WREN_COOKIES)";
+  if (/429|Too Many Requests/.test(err)) return "YouTube is rate-limiting the server";
+  if (/unavailable|private|removed/i.test(err)) return "video unavailable";
+  return err.replace(/^ERROR:\s*(\[\w+\]\s*[\w-]+:\s*)?/, "").slice(0, 120);
+}
+
+function workerStatus() {
+  if (!queueInfo) return subs === null ? "Can't reach the server right now." : "";
+  const w = queueInfo.worker;
+  const due = dueCount();
+  let text = "Up to date";
+  if (w.activity === "checking shows") text = "Checking for new episodes…";
+  else if (due) text = `Downloading · ${plural(due, "episode")} to go`;
+  else if (w.activity === "downloading") text = "Downloading…";
+  else if (retrying().length) text = `Waiting to retry ${plural(retrying().length, "download")}`;
+  return subs && subs.length ? `${text} · next check ${until(w.next_poll)}` : text;
+}
+
+function renderSubscriptions() {
+  const list = $("sub-list");
+  $("sub-status").textContent = workerStatus();
+  if (!subs || !subs.length) {
+    list.hidden = true;
+    return;
+  }
+  list.hidden = false;
+  list.replaceChildren(
+    ...subs.map(subscriptionRow),
+    h("button", { class: "row-btn", onclick: refreshAll }, "Check for new episodes"));
+}
+
+function subscriptionRow(s) {
+  const meta = [
+    plural(s.episodes, "episode"),
+    s.keep_last > 0 ? `keeps ${s.keep_last}` : "keeps all",
+    s.mode === "video" ? "video" : null,
+    s.queued ? `${s.queued} queued` : null,
+    `checked ${ago(s.last_checked)}`,
+  ].filter(Boolean).join(" · ");
+  const waiting = retrying(s.id);
+  let warn = null;
+  if (s.last_error) warn = friendlyError(s.last_error);
+  else if (waiting.length) warn = `Retrying ${waiting.length}: ${friendlyError(waiting[0].error)}`;
+  else if (s.failed) warn = `${plural(s.failed, "download")} failed`;
+  const isConfirming = confirming.has(s.id);
+
+  return h("div", { class: "sub-row" },
+    h("div", { class: "sub-text" },
+      h("span", { class: "sub-name" }, s.name),
+      h("span", { class: "sub-meta" }, meta),
+      warn ? h("span", { class: "sub-warn" }, warn) : null),
+    h("div", { class: "sub-actions" },
+      h("button", {
+        class: `icon-btn sm${refreshing.has(s.id) ? " spin" : ""}`,
+        "aria-label": `Check ${s.name} for new episodes`,
+        onclick: () => refreshShow(s),
+      }, icon("refresh")),
+      h("button", {
+        class: `text-btn${isConfirming ? " confirm" : ""}`,
+        "aria-label": isConfirming ? `Confirm unsubscribing from ${s.name}` : `Unsubscribe from ${s.name}`,
+        onclick: () => removeShow(s),
+      }, isConfirming ? "Confirm" : "Remove")));
+}
+
+async function refreshShow(s) {
+  refreshing.add(s.id);
+  renderSubscriptions();
+  try {
+    await fetch(`/api/shows/${s.id}/refresh`, { method: "POST" });
+  } catch {}
+  setTimeout(() => {
+    refreshing.delete(s.id);
+    loadSubscriptions();
+  }, 4000);
+}
+
+async function refreshAll() {
+  try {
+    await fetch("/api/refresh", { method: "POST" });
+    setStatus("Checking for new episodes…");
+  } catch {
+    setStatus("Can't reach the server right now.");
+  }
+  setTimeout(loadSubscriptions, 4000);
+}
+
+async function removeShow(s) {
+  if (!confirming.has(s.id)) {
+    confirming.add(s.id);
+    renderSubscriptions();
+    setTimeout(() => {
+      confirming.delete(s.id);
+      renderSubscriptions();
+    }, 3000);
+    return;
+  }
+  confirming.delete(s.id);
+  try {
+    const res = await fetch(`/api/shows/${s.id}`, { method: "DELETE" });
+    if (!res.ok && res.status !== 404) throw new Error(`HTTP ${res.status}`);
+    setStatus(`Unsubscribed from ${s.name}. Its episodes stay in your library.`, 5000);
+  } catch (err) {
+    setStatus(`Couldn't unsubscribe: ${err.message}`);
+  }
+  loadSubscriptions();
+  loadLibrary(true);
+}
+
+$("sub-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const btn = $("sub-submit");
+  const url = $("sub-url").value.trim();
+  const mode = new FormData(e.target).get("sub-mode");
+  btn.disabled = true;
+  btn.textContent = "Looking up show…";
+  try {
+    const res = await fetch("/api/shows", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, mode }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+    $("sub-url").value = "";
+    setStatus(`Subscribed to ${data.name}. Fetching the latest episodes…`, 5000);
+    loadSubscriptions();
+  } catch (err) {
+    setStatus(`Couldn't subscribe: ${err.message}`, 8000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Subscribe";
+  }
+});
 
 // ---- offline downloads ----------------------------------------------------
 
@@ -536,11 +768,28 @@ async function pollJob(jobId) {
 
 // ---- boot -----------------------------------------------------------------
 
+seenSince(); // start the "new episodes" clock on this device's first launch
 document.querySelectorAll("[data-icon]").forEach((el) => el.prepend(icon(el.dataset.icon)));
 syncPlayButtons();
 syncSpeed();
 
-window.addEventListener("hashchange", () => { render(); window.scrollTo(0, 0); });
+window.addEventListener("hashchange", () => {
+  visitSnapshot.clear();
+  render();
+  window.scrollTo(0, 0);
+  if (location.hash === "#/settings") loadSubscriptions();
+  else clearTimeout(subsTimer);
+});
+// Pick up newly downloaded episodes while the app is open.
+setInterval(() => {
+  if (document.visibilityState === "visible") loadLibrary(true);
+}, 60000);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  loadLibrary(true);
+  if (location.hash === "#/settings") loadSubscriptions();
+});
+if (location.hash === "#/settings") loadSubscriptions();
 window.addEventListener("online", render);
 window.addEventListener("offline", render);
 if (canOffline) navigator.serviceWorker.register("sw.js");
