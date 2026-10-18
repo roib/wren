@@ -1186,14 +1186,47 @@ function syncNav() {
 }
 $("scroller").addEventListener("scroll", syncNav, { passive: true });
 
-function onRoute() {
+// Each page remembers how far it was scrolled, so going back returns you there.
+const scrollMemory = new Map();
+
+function onRoute({ restoreScroll = false } = {}) {
   visitSnapshot.clear();
   render();
-  $("scroller").scrollTop = 0;
+  $("scroller").scrollTop = restoreScroll ? (scrollMemory.get(location.hash) || 0) : 0;
   syncNav();
   if (onSettings()) loadSubscriptions();
   else clearTimeout(subsTimer);
 }
+
+// How deep a page is: Shows is the top; a show or Settings sits one level in.
+function routeDepth(hash) {
+  return !hash || hash === "#/" ? 0 : 1;
+}
+
+// Move to another page with an iOS-style push/pop slide (or a quick fade between
+// pages at the same depth, like the Settings tabs). Uses view transitions where
+// the browser supports them; elsewhere it simply switches.
+function navigate(href) {
+  if (href === location.hash) return;
+  const from = routeDepth(location.hash);
+  const to = routeDepth(href);
+  const dir = to > from ? "forward" : to < from ? "back" : "fade";
+  scrollMemory.set(location.hash, $("scroller").scrollTop);
+  const go = () => {
+    history.replaceState(null, "", href);
+    onRoute({ restoreScroll: dir === "back" });
+  };
+  if (!document.startViewTransition) return go();
+  // A tap mid-slide starts a new transition, which ends the old one; only the
+  // latest navigation may clear the direction, or it would wipe the new one's.
+  const token = ++navToken;
+  document.documentElement.dataset.nav = dir;
+  const transition = document.startViewTransition(go);
+  transition.finished.finally(() => {
+    if (token === navToken) delete document.documentElement.dataset.nav;
+  });
+}
+let navToken = 0;
 
 // In-app links replace the current history entry instead of adding one, so
 // iOS's edge swipe has nothing to go "back" to (it would drag the app's pages,
@@ -1202,11 +1235,9 @@ document.addEventListener("click", (e) => {
   const a = e.target.closest('a[href^="#/"]');
   if (!a || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
   e.preventDefault();
-  if (a.getAttribute("href") === location.hash) return;
-  history.replaceState(null, "", a.getAttribute("href"));
-  onRoute();
+  navigate(a.getAttribute("href"));
 });
-window.addEventListener("hashchange", onRoute);
+window.addEventListener("hashchange", () => onRoute());
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
   loadLibrary(true);

@@ -731,3 +731,50 @@ body.has-player #toast { bottom: calc(env(safe-area-inset-bottom) + 96px); }
   #sheet { transition: transform 0.24s ease-out, visibility 0s 0.24s; }
   #sheet.open { transition: transform 0.24s ease-out; }
 }
+
+/* ---- page transitions (view transitions) ----
+   The content area slides like an iOS navigation push/pop; the nav bar and
+   mini player stay put (they're their own transition groups, so they only
+   cross-fade if something in them changed). */
+/* Opaque, so a sliding page covers the one beneath it instead of showing through. */
+#scroller { view-transition-name: page; background: var(--bg); }
+.nav { view-transition-name: nav; }
+#mini { view-transition-name: mini; }
+#toast { view-transition-name: toast; }
+
+::view-transition-old(root),
+::view-transition-new(root) { animation: none; }
+
+::view-transition-old(page),
+::view-transition-new(page) {
+  mix-blend-mode: normal; /* no brightening where the two pages overlap */
+  animation-duration: 0.35s;
+  animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+  animation-fill-mode: both;
+}
+::view-transition-group(nav) { animation-duration: 0.3s; }
+
+/* Push: the new page slides in from the right over the old one, which drifts
+   left and dims. */
+html[data-nav="forward"]::view-transition-old(page) { animation-name: page-out-left; }
+html[data-nav="forward"]::view-transition-new(page) {
+  animation-name: page-in-right;
+  box-shadow: -10px 0 30px rgba(0, 0, 0, 0.35);
+}
+/* Pop: the reverse; the leaving page stays on top as it slides away. */
+html[data-nav="back"]::view-transition-old(page) {
+  animation-name: page-out-right;
+  z-index: 1;
+  box-shadow: -10px 0 30px rgba(0, 0, 0, 0.35);
+}
+html[data-nav="back"]::view-transition-new(page) { animation-name: page-in-left; }
+/* Same depth (Settings tabs): a quick cross-fade. */
+html[data-nav="fade"]::view-transition-old(page) { animation: page-fade-out 0.15s ease both; }
+html[data-nav="fade"]::view-transition-new(page) { animation: page-fade-in 0.15s ease both; }
+
+@keyframes page-in-right { from { transform: translateX(100%); } }
+@keyframes page-out-left { to { transform: translateX(-30%); filter: brightness(0.7); } }
+@keyframes page-out-right { to { transform: translateX(100%); } }
+@keyframes page-in-left { from { transform: translateX(-30%); filter: brightness(0.7); } }
+@keyframes page-fade-out { to { opacity: 0; } }
+@keyframes page-fade-in { from { opacity: 0; } }
