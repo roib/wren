@@ -607,6 +607,10 @@ body.has-player #toast { bottom: calc(env(safe-area-inset-bottom) + 96px); }
 .popover-check .ic { width: 18px; height: 18px; }
 @media (prefers-reduced-motion: reduce) { .popover { animation: none; } }
 
+/* With Reduce Motion on, iOS still slides sheets up, so keep the player's slide
+   (a little quicker) and only drop the decorative toast motion. */
 @media (prefers-reduced-motion: reduce) {
-  #sheet, #sheet.open, #toast { transition: none; }
+  #toast { transition: opacity 0.2s; transform: translate(-50%, 0); }
+  #sheet { transition: transform 0.24s ease-out, visibility 0s 0.24s; }
+  #sheet.open { transition: transform 0.24s ease-out; }
 }
