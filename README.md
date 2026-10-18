@@ -1,4 +1,8 @@
-# Wren
+<p align="center">
+  <img src="web/favicon.svg" alt="Wren" width="112">
+</p>
+
+<h1 align="center">Wren</h1>
 
 A self-hosted downloader that turns YouTube channels and playlists into private
 podcast feeds. Subscribe to a show, and Wren downloads new episodes as audio
