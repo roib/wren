@@ -202,6 +202,28 @@ main { margin-top: 18px; }
 .episode.done .ep-title { color: var(--muted); font-weight: 500; }
 .episode.unavailable { opacity: 0.4; }
 
+/* Episodes on their way from a subscription: greyed out until they arrive. */
+.episode.pending .ep-main { cursor: default; }
+.episode.pending .ep-title { color: var(--faint); font-weight: 500; }
+.episode.pending .ep-date,
+.episode.pending .ep-meta { color: var(--faint); }
+.episode.pending.downloading .ep-title { color: var(--muted); }
+.episode.pending.downloading .ep-date { color: var(--muted); }
+.spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+  vertical-align: -1px;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.show.coming img { opacity: 0.45; }
+.show.coming .show-name { color: var(--muted); }
+
 .ep-actions { display: flex; flex-shrink: 0; margin-right: -8px; }
 .check.on { color: var(--ok); }
 .dl.on { color: var(--fg); }

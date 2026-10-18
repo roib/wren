@@ -29,6 +29,7 @@ class FeedItem:
     title: str
     duration: int | None
     live_status: str | None
+    thumb_url: str | None = None
 
 
 @dataclass
@@ -98,6 +99,11 @@ def feed_url_for(url: str) -> str:
     return _playlist_url("UU" + channel_id[2:])
 
 
+def thumb_url(video_id: str) -> str:
+    """YouTube's standard medium-size thumbnail for a video."""
+    return f"https://i.ytimg.com/vi/{video_id}/mqdefault.jpg"
+
+
 def fetch(feed_url: str) -> Feed:
     with _ydl() as ydl:
         info = ydl.extract_info(feed_url, download=False)
@@ -112,6 +118,7 @@ def fetch(feed_url: str) -> Feed:
             title=(entry.get("title") or "").strip(),
             duration=int(entry["duration"]) if entry.get("duration") else None,
             live_status=entry.get("live_status"),
+            thumb_url=thumb_url(entry["id"]),
         ))
 
     list_id = urllib.parse.parse_qs(urllib.parse.urlparse(feed_url).query).get("list", [""])[0]

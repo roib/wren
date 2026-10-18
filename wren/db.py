@@ -50,6 +50,8 @@ CREATE TABLE IF NOT EXISTS feed_items (
     error      TEXT,
     first_seen INTEGER NOT NULL,
     next_try   INTEGER NOT NULL DEFAULT 0,  -- don't attempt before this time (retry backoff)
+    duration   INTEGER,         -- seconds, from the show listing
+    thumb_url  TEXT,            -- remote thumbnail, shown before the episode is downloaded
     PRIMARY KEY (show_id, item_id)
 );
 
@@ -80,6 +82,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(feed_items)")}
     if "next_try" not in cols:
         conn.execute("ALTER TABLE feed_items ADD COLUMN next_try INTEGER NOT NULL DEFAULT 0")
+    if "duration" not in cols:
+        conn.execute("ALTER TABLE feed_items ADD COLUMN duration INTEGER")
+    if "thumb_url" not in cols:
+        conn.execute("ALTER TABLE feed_items ADD COLUMN thumb_url TEXT")
     # WAL lets the API read while the worker thread writes.
     conn.execute("PRAGMA journal_mode = WAL")
     _migrated = True

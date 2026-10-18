@@ -9,6 +9,8 @@ const RING = 2 * Math.PI * 8; // circumference of the download progress ring
 const canOffline = "caches" in window && "serviceWorker" in navigator;
 
 let episodes = [];
+let pending = []; // episodes on their way from subscriptions (from /api/pending)
+let pendingWorker = null; // the server worker's status, to say when they'll arrive
 let downloaded = new Set(); // media_url paths stored in MEDIA_CACHE
 const downloading = new Map(); // episode key -> progress 0..1
 let current = null;
@@ -156,16 +158,32 @@ function markVisited(name) {
 
 async function loadLibrary(quiet = false) {
   try {
-    const res = await fetch("/api/library");
+    const [res, pend] = await Promise.all([fetch("/api/library"), fetch("/api/pending")]);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     episodes = await res.json();
     lsSet("library", JSON.stringify(episodes)); // fallback for offline launches
+    const p = pend.ok ? await pend.json() : { items: [], worker: null };
+    pending = p.items;
+    pendingWorker = p.worker;
   } catch {
     try { episodes = JSON.parse(lsGet("library")) || []; } catch { episodes = []; }
+    pending = [];
     if (!quiet) setStatus("Offline — downloaded episodes still play", 5000);
   }
   await loadDownloaded();
   render();
+  scheduleLibraryRefresh();
+}
+
+// Refresh the library every minute, or every 15 seconds while episodes are on
+// their way, so you see them arrive.
+let libraryTimer = null;
+function scheduleLibraryRefresh() {
+  clearTimeout(libraryTimer);
+  libraryTimer = setTimeout(() => {
+    if (document.visibilityState === "visible") loadLibrary(true);
+    else scheduleLibraryRefresh();
+  }, pending.length ? 15000 : 60000);
 }
 
 async function loadDownloaded() {
@@ -177,18 +195,47 @@ async function loadDownloaded() {
   );
 }
 
-function groupShows(eps) {
+function groupShows(eps, coming = []) {
   const shows = new Map();
-  for (const ep of eps) {
-    const name = ep.show || ep.channel || "Unknown";
-    if (!shows.has(name)) shows.set(name, []);
-    shows.get(name).push(ep);
-  }
+  const get = (name) => {
+    if (!shows.has(name)) shows.set(name, { name, episodes: [], pending: [] });
+    return shows.get(name);
+  };
+  for (const ep of eps) get(ep.show || ep.channel || "Unknown").episodes.push(ep);
+  for (const item of coming) get(item.show).pending.push(item);
+
   const newest = (ep) => `${ep.upload_date || ""}${String(ep.added_at).padStart(12, "0")}`;
-  return [...shows].map(([name, list]) => {
-    list.sort((a, b) => newest(b).localeCompare(newest(a)));
-    return { name, episodes: list };
-  }).sort((a, b) => newest(b.episodes[0]).localeCompare(newest(a.episodes[0])));
+  for (const show of shows.values()) {
+    show.episodes.sort((a, b) => newest(b).localeCompare(newest(a)));
+    show.pending.reverse(); // newest first, like the episodes
+  }
+  // Shows you can play come first (most recent episode first); shows with
+  // nothing downloaded yet follow, in name order.
+  return [...shows.values()].sort((a, b) => {
+    if (!a.episodes.length || !b.episodes.length) {
+      return (b.episodes.length > 0) - (a.episodes.length > 0) || a.name.localeCompare(b.name);
+    }
+    return newest(b.episodes[0]).localeCompare(newest(a.episodes[0]));
+  });
+}
+
+function fmtClock(ts) {
+  return new Date(ts * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+// What's happening to an episode that hasn't arrived yet.
+function pendingStatus(item) {
+  const w = pendingWorker;
+  if (item.state === "downloading") return "Downloading…";
+  if (item.state === "premiere") return "Premieres soon";
+  if (item.state === "retrying") {
+    return /not a bot|Sign in to confirm|429|Too Many Requests/i.test(item.error)
+      ? "Retrying · YouTube is blocking downloads" : "Retrying · download failed";
+  }
+  if (w?.paused_until) return `Queued · paused until ${fmtClock(w.paused_until)}`;
+  const forced = w && (w.override_shows?.includes(item.show_id) || (w.override && !w.override_shows?.length));
+  if (w && !w.active_now && !forced) return `Queued · downloads at ${fmtClock(w.resume_at)}`;
+  return "Queued";
 }
 
 // ---- rendering --------------------------------------------------------------
@@ -209,7 +256,7 @@ function currentShow() {
 function render() {
   const inSettings = onSettings();
   const showName = currentShow();
-  const shows = groupShows(episodes);
+  const shows = groupShows(episodes, pending);
   const show = showName && shows.find((s) => s.name === showName);
 
   $("back").hidden = !(show || inSettings);
@@ -222,8 +269,11 @@ function render() {
   let sub = "";
   if (show) {
     const unplayed = show.episodes.filter((ep) => !isDone(ep)).length;
-    sub = [plural(show.episodes.length, "episode"), unplayed ? `${unplayed} unplayed` : null]
-      .filter(Boolean).join(" · ");
+    sub = [
+      show.episodes.length ? plural(show.episodes.length, "episode") : null,
+      unplayed ? `${unplayed} unplayed` : null,
+      show.pending.length ? `${show.pending.length} coming` : null,
+    ].filter(Boolean).join(" · ");
   }
   $("view-sub").textContent = sub;
   $("view-sub").hidden = !sub;
@@ -234,7 +284,9 @@ function render() {
   }
   if (show) markVisited(show.name);
 
-  const items = show ? show.episodes.map((ep) => episodeRow(ep, show.name)) : shows.map(showRow);
+  const items = show
+    ? [...show.pending.map(pendingRow), ...show.episodes.map((ep) => episodeRow(ep, show.name))]
+    : shows.map(showRow);
   if (!items.length) {
     items.push(h("li", { class: "empty" },
       h("p", {}, "No episodes yet."),
@@ -247,18 +299,32 @@ function render() {
 function showRow(show) {
   const unplayed = show.episodes.filter((ep) => !isDone(ep)).length;
   const fresh = show.episodes.filter((ep) => isNew(ep, show.name)).length;
-  const art = show.episodes.find((ep) => ep.thumb_url)?.thumb_url;
+  const coming = show.pending.length;
+  const art = show.episodes.find((ep) => ep.thumb_url)?.thumb_url ?? show.pending[0]?.thumb_url;
   let sub = plural(show.episodes.length, "episode");
-  if (fresh) sub = `${fresh} new`;
+  if (!show.episodes.length) sub = `${plural(coming, "episode")} coming`;
+  else if (fresh) sub = `${fresh} new`;
   else if (unplayed) sub = `${unplayed} unplayed`;
+  if (show.episodes.length && coming) sub += ` · ${coming} coming`;
 
   return h("li", {},
-    h("a", { class: "show", href: `#/show/${encodeURIComponent(show.name)}` },
+    h("a", { class: `show${show.episodes.length ? "" : " coming"}`, href: `#/show/${encodeURIComponent(show.name)}` },
       h("img", { src: art ?? "", alt: "", loading: "lazy" }),
       h("span", { class: "show-text" },
         h("span", { class: "show-name" }, show.name),
         h("span", { class: "show-sub" }, fresh ? h("span", { class: "dot" }) : null, sub)),
       h("span", { class: "chev" }, icon("chevronRight"))));
+}
+
+function pendingRow(item) {
+  const downloading = item.state === "downloading";
+  return h("li", { class: `episode pending${downloading ? " downloading" : ""}`, "aria-disabled": "true" },
+    h("div", { class: "ep-main" },
+      h("span", { class: "ep-date" },
+        downloading ? h("span", { class: "spinner", "aria-hidden": "true" }) : null,
+        pendingStatus(item)),
+      h("span", { class: "ep-title" }, item.title),
+      h("span", { class: "ep-meta" }, item.duration ? fmtMinutes(item.duration) : "")));
 }
 
 function episodeRow(ep, showName) {
@@ -421,12 +487,11 @@ function workerStatus() {
   if (!queueInfo) return subs === null ? "Can't reach the server right now." : "";
   const w = queueInfo.worker;
   const due = dueCount();
-  const clock = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   let text = "Up to date";
-  if (w.paused_until) text = `YouTube is rate-limiting the server · paused until ${clock(w.paused_until)}`;
+  if (w.paused_until) text = `YouTube is rate-limiting the server · paused until ${fmtClock(w.paused_until)}`;
   else if (w.activity === "checking shows") text = "Checking for new episodes…";
   else if (due && w.override) text = `Downloading now · ${plural(due, "episode")} to go`;
-  else if (due && !w.active_now) text = `${plural(due, "download")} waiting until ${clock(w.resume_at)}`;
+  else if (due && !w.active_now) text = `${plural(due, "download")} waiting until ${fmtClock(w.resume_at)}`;
   else if (due) text = `Downloading · ${plural(due, "episode")} to go`;
   else if (w.activity === "downloading") text = "Downloading…";
   else if (retrying().length) text = `Waiting to retry ${plural(retrying().length, "download")}`;
@@ -1012,10 +1077,6 @@ document.addEventListener("click", (e) => {
   onRoute();
 });
 window.addEventListener("hashchange", onRoute);
-// Pick up newly downloaded episodes while the app is open.
-setInterval(() => {
-  if (document.visibilityState === "visible") loadLibrary(true);
-}, 60000);
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
   loadLibrary(true);

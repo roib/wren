@@ -165,6 +165,12 @@ def download_now():
     return {"ok": True}
 
 
+@app.get("/api/pending")
+def pending():
+    """Episodes on their way: what the app shows greyed out until they arrive."""
+    return {"worker": background.status(), "items": subscriptions.list_pending()}
+
+
 @app.get("/api/queue")
 def queue():
     with db.connect() as conn:

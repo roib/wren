@@ -146,10 +146,12 @@ def _feed_skip_reason(show: dict, item: feeds.FeedItem) -> str | None:
 def _insert_item(conn, show_id: int, item: feeds.FeedItem, skip_reason: str | None) -> None:
     conn.execute(
         """INSERT OR IGNORE INTO feed_items
-               (show_id, item_id, url, title, published, status, error, first_seen)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               (show_id, item_id, url, title, published, status, error, first_seen,
+                duration, thumb_url)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (show_id, item.item_id, item.url, item.title, None,
-         "skipped" if skip_reason else "queued", skip_reason, _now()),
+         "skipped" if skip_reason else "queued", skip_reason, _now(),
+         item.duration, item.thumb_url),
     )
 
 
@@ -193,8 +195,21 @@ UPCOMING_RECHECK_SECONDS = 60 * 60
 CLAIM_SECONDS = 60 * 60  # how long a claimed item is hidden from other workers
 
 
+# The subscription item being downloaded right now, for the app's "Downloading…" row.
+current_item: tuple[int, str] | None = None
+
+
 def _download_item(show: dict, item: dict) -> bool:
     """Try to download one feed item and record the outcome. True if it was downloaded."""
+    global current_item
+    current_item = (show["id"], item["item_id"])
+    try:
+        return _try_download(show, item)
+    finally:
+        current_item = None
+
+
+def _try_download(show: dict, item: dict) -> bool:
     if db.has_episode(item["item_id"], show["mode"]):
         # Already in the library (e.g. added by hand): just claim it.
         with db.connect() as conn:
@@ -281,6 +296,30 @@ def download_next(show_ids: list[int] | None = None) -> bool:
     if claimed:
         _download_item(show, dict(row))
     return True
+
+
+def list_pending() -> list[dict]:
+    """Queued episodes of enabled shows, oldest first, with what's happening to each:
+    downloading, queued, retrying (failed, waiting to try again) or premiere."""
+    with db.connect() as conn:
+        rows = [dict(r) for r in conn.execute(
+            """SELECT f.show_id, s.name AS show, f.item_id, f.title, f.duration, f.thumb_url,
+                      f.attempts, f.error, f.next_try
+               FROM feed_items f JOIN shows s ON s.id = f.show_id
+               WHERE f.status = 'queued' AND s.enabled = 1
+               ORDER BY f.rowid""")]
+    for r in rows:
+        if current_item == (r["show_id"], r["item_id"]):
+            r["state"] = "downloading"
+        elif r["error"] == "upcoming":
+            r["state"] = "premiere"
+        elif r["error"]:
+            r["state"] = "retrying"
+        else:
+            r["state"] = "queued"
+        # Items queued before thumbnails were stored still get one.
+        r["thumb_url"] = r["thumb_url"] or feeds.thumb_url(r["item_id"])
+    return rows
 
 
 # ---- retention ------------------------------------------------------------------
