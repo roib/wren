@@ -100,9 +100,10 @@ def _run_next_job() -> bool:
     except Exception as e:
         _update_job(job["id"], status="error", error=str(e)[:500])
         log.warning("Download failed: %s", e)
-        push.alert(f"job:{job['id']}", "Couldn't add an episode", f"{job['url']}: {push.short_error(e)}", "/#/singles")
+        push.alert(f"job:{job['url']}", "Couldn't add an episode", f"{job['url']}: {push.short_error(e)}", "/#/singles")
     else:
         _update_job(job["id"], status="done", title=ep["title"], error=None)
+        push.resolve(f"job:{job['url']}")
     return True
 
 
@@ -131,17 +132,26 @@ def daily_checks(now: float) -> None:
         return
     _checked_on = today.isoformat()
     try:
+        # Each check also resolves its earlier alert once the problem is gone.
         if Path("/tmp/ytdlp-update-failed").exists():
-            push.alert(f"ytdlp:{today}", "yt-dlp didn't update",
+            push.alert("ytdlp", "yt-dlp didn't update",
                        f"Wren is using its built-in yt-dlp ({yt_dlp.version.__version__}). "
                        "Downloads may break if YouTube changed something.")
+        else:
+            push.resolve("ytdlp")
         free = shutil.disk_usage(MEDIA_DIR).free
         if free < LOW_DISK_BYTES:
-            push.alert(f"disk:{today}", "Running low on space", f"Only {free / 1e9:.0f} GB left for downloads.")
+            push.alert("disk", "Running low on space", f"Only {free / 1e9:.0f} GB left for downloads.")
+        else:
+            push.resolve("disk")
+        quiet = set()
         for show, days, usual in quiet_shows(today):
-            push.alert(f"quiet:{show['id']}:{show['newest']}", f"{show['name']} has gone quiet",
+            key = f"quiet:{show['id']}:{show['newest']}"
+            quiet.add(key)
+            push.alert(key, f"{show['name']} has gone quiet",
                        f"No new episode in {days} days (usually every {usual}). "
                        "The channel may have moved its full episodes elsewhere.", f"/#/show/{show['id']}")
+        push.resolve_matching("quiet:", keep=quiet)
     except Exception:
         log.exception("Daily checks failed")
 
@@ -189,6 +199,7 @@ class Worker:
 
     def start(self) -> None:
         _recover()
+        push.resolve_matching("paused:")  # a pause doesn't survive a restart
         self.next_poll = next_active(time.time() + FIRST_POLL_DELAY)
         self._thread = threading.Thread(target=self._run, name="wren-worker", daemon=True)
         self._thread.start()
@@ -284,6 +295,9 @@ class Worker:
         if now < self.paused_until:
             self.activity = "paused"
             return False
+        if self.paused_until:
+            push.resolve(f"paused:{int(self.paused_until)}")
+            self.paused_until = 0.0
 
         try:
             self.activity = "downloading"

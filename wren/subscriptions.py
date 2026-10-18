@@ -126,6 +126,7 @@ def update_show(show_id: int, **fields) -> dict:
 
 def requeue_item(show_id: int, item_id: str) -> bool:
     """Queue a skipped or failed episode again, with fresh attempts."""
+    push.resolve(f"failed:{show_id}:{item_id}")
     with db.connect() as conn:
         return bool(conn.execute(
             """UPDATE feed_items SET status = 'queued', attempts = 0, error = NULL, next_try = 0
@@ -179,7 +180,7 @@ def _check_feed(show: dict) -> int:
         push.alert(f"showerror:{show['id']}", f"{show['name']}: can't check for episodes",
                    push.short_error(e), f"/#/show/{show['id']}")
         return 0
-    push.clear(f"showerror:{show['id']}")
+    push.resolve(f"showerror:{show['id']}")
 
     with db.connect() as conn:
         seen = {r["item_id"] for r in conn.execute(
@@ -292,6 +293,7 @@ def _try_download(show: dict, item: dict) -> bool:
         return False
 
     _set_item(show["id"], item["item_id"], status="downloaded", error=None, next_try=0)
+    push.resolve(f"failed:{show['id']}:{item['item_id']}")
     _apply_retention(show)
     return True
 

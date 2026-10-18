@@ -65,10 +65,18 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
     origin     TEXT,            -- the app's address, used as the push contact
     created_at INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS alerts (
-    key     TEXT PRIMARY KEY,   -- names a problem, e.g. "showerror:7"
-    sent_at INTEGER NOT NULL
+-- Every problem Wren noticed, for the Alerts page. A key names the problem
+-- ("showerror:7"); while one with that key is unresolved it isn't raised again.
+CREATE TABLE IF NOT EXISTS alert_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    key         TEXT NOT NULL,
+    title       TEXT NOT NULL,
+    body        TEXT NOT NULL,
+    url         TEXT NOT NULL,
+    created_at  INTEGER NOT NULL,
+    resolved_at INTEGER         -- fixed itself, or dismissed
 );
+CREATE INDEX IF NOT EXISTS alert_log_open ON alert_log (key) WHERE resolved_at IS NULL;
 
 -- Manual "add this URL" downloads, processed by the background worker.
 CREATE TABLE IF NOT EXISTS jobs (
@@ -106,6 +114,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE feed_items ADD COLUMN duration INTEGER")
     if "thumb_url" not in cols:
         conn.execute("ALTER TABLE feed_items ADD COLUMN thumb_url TEXT")
+    conn.execute("DROP TABLE IF EXISTS alerts")  # replaced by alert_log
     # WAL lets the API read while the worker thread writes.
     conn.execute("PRAGMA journal_mode = WAL")
     _migrated = True

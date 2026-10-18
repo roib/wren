@@ -61,6 +61,7 @@ def overview():
         "worker": background.status(),
         "pending": subscriptions.list_pending(),
         "jobs": worker.list_jobs(20),
+        "alerts": push.active_count(),
     }
 
 
@@ -238,6 +239,23 @@ def queue():
 
 
 # ---- alerts (Web Push) --------------------------------------------------------------
+
+@app.get("/api/alerts")
+def alerts():
+    return push.listing()
+
+
+@app.post("/api/alerts/dismiss-all", status_code=204)
+def dismiss_all_alerts():
+    push.dismiss()
+    return Response(status_code=204)
+
+
+@app.post("/api/alerts/{alert_id}/dismiss", status_code=204)
+def dismiss_alert(alert_id: int):
+    push.dismiss(alert_id)
+    return Response(status_code=204)
+
 
 @app.get("/api/push/key")
 def push_key():

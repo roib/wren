@@ -12,6 +12,9 @@ self.addEventListener("activate", (e) => {
 self.addEventListener("push", (e) => {
   let data = {};
   try { data = e.data ? e.data.json() : {}; } catch { data = { body: e.data?.text() }; }
+  if (typeof data.badge === "number") {
+    try { data.badge ? self.navigator.setAppBadge?.(data.badge) : self.navigator.clearAppBadge?.(); } catch {}
+  }
   e.waitUntil(self.registration.showNotification(data.title || "Wren", {
     body: data.body || "",
     tag: data.tag || undefined,

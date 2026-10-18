@@ -166,7 +166,22 @@ img { display: block; }
 #back .ic { width: 26px; height: 26px; }
 #back:active { opacity: 0.5; }
 .nav-actions { margin-left: auto; display: flex; }
-.nav-actions .icon-btn { color: var(--fg); }
+.nav-actions .icon-btn { color: var(--fg); position: relative; }
+.nav-badge {
+  position: absolute;
+  top: 6px;
+  right: 5px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--warn);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 17px;
+  text-align: center;
+}
 
 #view-title {
   font-size: 32px;
@@ -457,6 +472,20 @@ main { margin-top: 16px; }
 .disclosure .chev { transition: transform 0.2s; }
 .disclosure[aria-expanded="true"] .chev { transform: rotate(180deg); }
 .disclosure + .card { margin-top: 8px; }
+
+/* ---- alerts ---- */
+
+.alert-item { display: flex; align-items: center; gap: 8px; padding-right: 12px; }
+.alert-main { flex: 1; min-width: 0; display: flex; align-items: flex-start; gap: 12px; padding: 12px 0 12px 14px; }
+.alert-main:active { opacity: 0.6; }
+.alert-icon { color: var(--warn); padding-top: 1px; }
+.alert-icon .ic { width: 20px; height: 20px; }
+.alert-title { font-size: 15px; font-weight: 600; line-height: 1.3; }
+.alert-body { font-size: 14px; color: var(--muted); line-height: 1.35; overflow-wrap: anywhere; }
+.alert-item.resolved .alert-icon { color: var(--ok); }
+.alert-item.resolved .alert-title { font-weight: 500; color: var(--muted); }
+.section-head { display: flex; align-items: center; justify-content: space-between; margin: 0 4px 8px; }
+.section-head h2 { margin: 0; }
 
 /* ---- settings ---- */
 

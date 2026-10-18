@@ -11,6 +11,7 @@ const ICONS = {
   download: '<path d="M12 4.5v10.5M7.5 10.5 12 15l4.5-4.5M5.5 19.5h13"/>',
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  bell: '<path d="M6.5 16.5V11a5.5 5.5 0 0 1 11 0v5.5l1.5 2h-14z"/><path d="M10 20.5a2.2 2.2 0 0 0 4 0"/>',
   pulse: '<path d="M3 12h4l2.5-6 5 12 2.5-6h4"/>',
   podcast: '<circle cx="12" cy="10.5" r="2.2"/><path d="M12 12.7V20"/><path d="M8.3 14.6a5.2 5.2 0 1 1 7.4 0"/><path d="M5.7 17.3a8.8 8.8 0 1 1 12.6 0"/>',
   copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2.2"/><path d="M15.5 8.5V6.7a2.2 2.2 0 0 0-2.2-2.2H6.7a2.2 2.2 0 0 0-2.2 2.2v6.6a2.2 2.2 0 0 0 2.2 2.2h1.8"/>',
@@ -169,6 +170,7 @@ function route() {
   if (path === "/singles") return { name: "singles", id: "singles", params };
   if (path === "/add") return { name: "add", params };
   if (path === "/status") return { name: "status", params };
+  if (path === "/alerts") return { name: "alerts", params };
   return { name: "home", params };
 }
 
@@ -182,8 +184,14 @@ async function load() {
   try {
     if (r.name === "show") details.set(r.id, await api(`/api/shows/${r.id}/detail`));
     else if (r.name === "singles") details.set("singles", await api("/api/singles"));
-    else if (r.name !== "add") overview = await api("/api/overview");
-    if (r.name === "status" && !pushState) await loadPushState();
+    else if (r.name === "alerts") {
+      alertList = await api("/api/alerts");
+      showBadge(alertList.active.length);
+      if (!pushState) await loadPushState();
+    } else if (r.name !== "add") {
+      overview = await api("/api/overview");
+      showBadge(overview.alerts);
+    }
     loadError = null;
   } catch (err) {
     loadError = err.message;
@@ -239,6 +247,9 @@ function render() {
   } else if (r.name === "add") {
     title = "Add";
     body = addView(r.params);
+  } else if (r.name === "alerts") {
+    title = "Alerts";
+    body = alertList ? alertsView(alertList) : placeholder();
   } else if (r.name === "status") {
     title = "Status";
     body = overview ? statusView(overview) : placeholder();
@@ -833,10 +844,58 @@ function statusView(data) {
     jobs.length ? section("Single episodes", h("div", { class: "card list-card" },
       jobs.map((j) => kv(j.title || j.url,
         j.status === "error" ? "Failed" : j.status === "done" ? ago(j.updated_at) : j.status === "running" ? "Downloading" : "Queued")))) : null,
-    alertsSection(),
     section("Storage", h("div", { class: "card list-card" },
       kv("Episodes", join(plural(data.totals.episodes, "episode"), fmtBytes(data.totals.bytes) || "0 MB")),
       kv("Free space", `${fmtBytes(data.disk.free)} of ${fmtBytes(data.disk.total)}`))));
+}
+
+// ---- alerts page -------------------------------------------------------------------
+
+let alertList = null; // /api/alerts: { active, recent }
+
+// The count on the bell and on the home-screen icon.
+function showBadge(n) {
+  $("alerts-badge").hidden = !n;
+  $("alerts-badge").textContent = n > 9 ? "9+" : String(n || "");
+  $("alerts-link").setAttribute("aria-label", n ? `Alerts: ${n}` : "Alerts");
+  try {
+    if (n) navigator.setAppBadge?.(n)?.catch?.(() => {});
+    else navigator.clearAppBadge?.()?.catch?.(() => {});
+  } catch {}
+}
+
+function alertRow(a, active) {
+  const when = active ? ago(a.created_at) : `Resolved ${ago(a.resolved_at)}`;
+  return h("li", { class: `alert-item${active ? "" : " resolved"}` },
+    h("a", { class: "alert-main", href: a.url.replace(/^\//, "") || "#/" },
+      h("span", { class: "alert-icon" }, icon(active ? "alert" : "check")),
+      h("span", { class: "row-text" },
+        h("span", { class: "alert-title" }, a.title),
+        h("span", { class: "alert-body" }, a.body),
+        h("span", { class: "row-meta" }, when))),
+    active ? h("button", { class: "action subtle", onclick: () => dismissAlert(a.id) }, "Dismiss") : null);
+}
+
+function alertsView(list) {
+  return h("div", {},
+    section(list.active.length > 1 ? null : "Now",
+      list.active.length > 1 ? h("div", { class: "section-head" },
+        h("h2", {}, "Now"),
+        h("button", { class: "action subtle", onclick: () => dismissAlert(null) }, "Clear all")) : null,
+      list.active.length
+        ? h("ul", { class: "card list-card" }, list.active.map((a) => alertRow(a, true)))
+        : h("p", { class: "none card" }, "Nothing needs your attention.")),
+    list.recent.length ? section("Earlier", h("ul", { class: "card list-card" }, list.recent.map((a) => alertRow(a, false)))) : null,
+    notificationsSection());
+}
+
+async function dismissAlert(id) {
+  try {
+    await api(id === null ? "/api/alerts/dismiss-all" : `/api/alerts/${id}/dismiss`, { method: "POST" });
+  } catch (err) {
+    toast(`Couldn't dismiss: ${err.message}`);
+  }
+  load();
 }
 
 // ---- alerts (Web Push) ------------------------------------------------------------
@@ -908,20 +967,20 @@ async function testAlert() {
   }
 }
 
-const ALERTS_ABOUT = "Wren lets you know when YouTube blocks downloads, an episode fails for good, a show can't be "
+const ALERTS_ABOUT = "Notifications let you know right away when YouTube blocks downloads, an episode fails for good, a show can't be "
   + "checked or goes quiet, space runs low, or yt-dlp couldn't update.";
 
-function alertsSection() {
+function notificationsSection() {
   const p = pushState;
   let body;
   if (!p) body = h("p", { class: "none" }, "Checking…");
   else if (!p.supported) {
-    body = h("p", { class: "none" }, "Open Wren from your home screen to turn on alerts.");
+    body = h("p", { class: "none" }, "Open Wren from your home screen to get notifications.");
   } else if (p.permission === "denied") {
     body = h("p", { class: "none" }, "Notifications are blocked. Allow them in iOS Settings → Notifications → Wren.");
   } else if (p.subscribed) {
     body = [
-      kv("Alerts", "On for this device"),
+      kv("Notifications", "On for this device"),
       h("div", { class: "hero-actions pad" },
         h("button", { class: "action", onclick: testAlert }, "Send a test alert"),
         h("button", { class: "action subtle", onclick: disableAlerts }, "Turn off")),
@@ -929,9 +988,9 @@ function alertsSection() {
   } else {
     body = h("div", { class: "pad" },
       h("button", { class: "button strong full", "data-native-tap": true, onclick: (e) => enableAlerts(e.currentTarget) },
-        "Turn on alerts"));
+        "Turn on notifications"));
   }
-  return section("Alerts", h("div", { class: "card list-card" }, body), h("p", { class: "setting-hint section-hint" }, ALERTS_ABOUT));
+  return section("Notifications", h("div", { class: "card list-card" }, body), h("p", { class: "setting-hint section-hint" }, ALERTS_ABOUT));
 }
 
 async function command(path, msg) {

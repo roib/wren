@@ -89,30 +89,71 @@ def _send_all(payload: dict) -> None:
 
 def send(title: str, body: str, url: str = "/#/status", tag: str | None = None) -> None:
     """Notify every subscribed device, in the background."""
-    payload = {"title": title, "body": body, "url": url, "tag": tag}
+    payload = {"title": title, "body": body, "url": url, "tag": tag, "badge": active_count()}
     threading.Thread(target=_send_all, args=(payload,), daemon=True).start()
 
 
+# ---- the alert log --------------------------------------------------------------------
+
 def alert(key: str, title: str, body: str, url: str = "/#/status") -> bool:
-    """Send an alert unless one with this key was already sent. Keys name a
-    problem ("showerror:7"); clear() it when the problem goes away so it can be
-    announced again if it comes back. Returns True if sent. With no devices
-    signed up nothing is recorded, so turning alerts on later still reports
-    problems that are still going on."""
-    if not subscriber_count():
-        return False
+    """Record a problem and notify devices, unless the same problem (same key)
+    is already open. resolve() it when it goes away, so it's raised again if it
+    comes back. Returns True if it was new."""
+    now = int(time.time())
     with db.connect() as conn:
-        new = conn.execute("INSERT OR IGNORE INTO alerts (key, sent_at) VALUES (?, ?)",
-                           (key, int(time.time()))).rowcount
-    if new:
-        log.info("Alert: %s: %s", title, body)
-        send(title, body, url, tag=key)
-    return bool(new)
+        if conn.execute("SELECT 1 FROM alert_log WHERE key = ? AND resolved_at IS NULL", (key,)).fetchone():
+            return False
+        conn.execute("INSERT INTO alert_log (key, title, body, url, created_at) VALUES (?, ?, ?, ?, ?)",
+                     (key, title, body, url, now))
+    log.info("Alert: %s: %s", title, body)
+    send(title, body, url, tag=key)
+    return True
 
 
-def clear(key: str) -> None:
+def resolve(key: str) -> None:
+    """The problem went away."""
+    resolve_matching(key)
+
+
+def resolve_matching(prefix: str, keep: set[str] = frozenset()) -> None:
+    """Resolve open alerts whose key starts with `prefix`, except those in `keep`."""
     with db.connect() as conn:
-        conn.execute("DELETE FROM alerts WHERE key = ?", (key,))
+        rows = conn.execute("SELECT id, key FROM alert_log WHERE resolved_at IS NULL AND key LIKE ? ESCAPE '\\'",
+                            (prefix.replace("%", "\\%").replace("_", "\\_") + "%",)).fetchall()
+        ids = [r["id"] for r in rows if r["key"] not in keep]
+        if ids:
+            conn.execute(f"UPDATE alert_log SET resolved_at = ? WHERE id IN ({','.join('?' * len(ids))})",
+                         (int(time.time()), *ids))
+
+
+def dismiss(alert_id: int | None = None) -> None:
+    """Mark one open alert (or all of them) as dealt with."""
+    with db.connect() as conn:
+        if alert_id is None:
+            conn.execute("UPDATE alert_log SET resolved_at = ? WHERE resolved_at IS NULL", (int(time.time()),))
+        else:
+            conn.execute("UPDATE alert_log SET resolved_at = ? WHERE id = ? AND resolved_at IS NULL",
+                         (int(time.time()), alert_id))
+
+
+def active_count() -> int:
+    with db.connect() as conn:
+        return conn.execute("SELECT COUNT(*) FROM alert_log WHERE resolved_at IS NULL").fetchone()[0]
+
+
+HISTORY_DAYS = 14
+
+
+def listing() -> dict:
+    """Open alerts, newest first, and those resolved in the last two weeks."""
+    with db.connect() as conn:
+        active = [dict(r) for r in conn.execute(
+            "SELECT * FROM alert_log WHERE resolved_at IS NULL ORDER BY created_at DESC")]
+        recent = [dict(r) for r in conn.execute(
+            "SELECT * FROM alert_log WHERE resolved_at >= ? ORDER BY resolved_at DESC LIMIT 50",
+            (int(time.time()) - HISTORY_DAYS * 86400,))]
+        conn.execute("DELETE FROM alert_log WHERE resolved_at < ?", (int(time.time()) - 90 * 86400,))
+    return {"active": active, "recent": recent}
 
 
 def short_error(err) -> str:
