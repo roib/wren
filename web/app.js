@@ -868,7 +868,7 @@ function handOffToAudio() {
   handbackToken++; // cancel any hand-back still waiting
   const t = videoEl.currentTime;
   const rate = videoEl.playbackRate;
-  if (!audioEl.src.endsWith(current.media_url)) audioEl.src = current.media_url;
+  if (!sameSrc(audioEl, current.media_url)) audioEl.src = current.media_url;
   media = audioEl;
   handoff = true;
   videoEl.pause();
@@ -982,7 +982,7 @@ function finishHandback(t, play, alreadyCued = false) {
 // same spot, so a hand-off has data ready instead of starting cold.
 setInterval(() => {
   if (handoff || media !== videoEl || videoEl.paused || document.visibilityState !== "visible") return;
-  if (!current || current.mode !== "video" || !audioEl.src.endsWith(current.media_url)) return;
+  if (!current || current.mode !== "video" || !sameSrc(audioEl, current.media_url)) return;
   audioEl.currentTime = videoEl.currentTime + 1;
 }, 10000);
 
@@ -1182,7 +1182,9 @@ function setupMediaSession(ep) {
   ms.setActionHandler("pause", () => {
     wantPlaying = false;
     media.pause();
-    clientLog(`pause (lock screen) at ${Math.round(media.currentTime)}s`);
+    if (current && !isDone(current)) setPos(current, media.currentTime); // where to resume
+    clientLog(`pause (lock screen) at ${Math.round(media.currentTime)}/${Math.round(media.duration || 0)}s, ` +
+      `${media === audioEl ? "audio" : "video"}${handoff ? " (handoff)" : ""}`);
   });
   ms.setActionHandler("seekbackward", (d) => skip(-(d.seekOffset || 15)));
   ms.setActionHandler("seekforward", (d) => skip(d.seekOffset || 30));
@@ -1196,15 +1198,33 @@ function setupMediaSession(ep) {
 function resumeFromSystem(source) {
   wantPlaying = true;
   const el = media;
-  const t = el.currentTime;
-  const before = `readyState ${el.readyState}, network ${el.networkState}`;
-  el.currentTime = t;
+  const which = el === audioEl ? "audio" : "video";
+  // Resume where we paused (the saved position), not wherever a stuck player
+  // claims to be.
+  const t = current && !isDone(current) ? (getPos(current) || el.currentTime) : el.currentTime;
+  const before = `${which}${handoff ? " (handoff)" : ""}, readyState ${el.readyState}, ` +
+    `network ${el.networkState}, at ${Math.round(el.currentTime)}/${Math.round(el.duration || 0)}s`;
+  // Resuming an element that sat paused in the background can leave iOS
+  // "playing" with a frozen clock and no sound. Reloading the file (starting at
+  // t via a media fragment) makes it build a fresh player and audio path.
+  el.src = `${srcOf(el)}#t=${t.toFixed(2)}`;
+  const t0 = performance.now();
   el.play().then(() => {
-    clientLog(`resume (${source}) at ${Math.round(t)}s: play ok (${before} -> readyState ${el.readyState})`);
+    clientLog(`resume (${source}) reload at ${Math.round(t)}s: play ok in ${Math.round(performance.now() - t0)}ms [${before}]`);
     setTimeout(() => {
-      clientLog(`resume check: ${el.paused ? "paused" : "playing"}, advanced ${(el.currentTime - t).toFixed(1)}s in ~2s`);
+      clientLog(`resume check: ${el.paused ? "paused" : "playing"}, at ${el.currentTime.toFixed(1)}s ` +
+        `(advanced ${(el.currentTime - t).toFixed(1)}s in ~2s), readyState ${el.readyState}`);
     }, 2000);
-  }).catch((err) => clientLog(`resume (${source}) failed: ${err.name} ${err.message}`));
+  }).catch((err) => clientLog(`resume (${source}) failed: ${err.name} ${err.message} [${before}]`));
+}
+
+// An element's source without any media fragment (#t=...).
+function srcOf(el) {
+  return (el.currentSrc || el.src).split("#")[0];
+}
+
+function sameSrc(el, url) {
+  return srcOf(el).endsWith(url);
 }
 
 function skip(delta) {
