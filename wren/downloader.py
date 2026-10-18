@@ -5,6 +5,7 @@ Audio: AAC in .m4a, kept as-is unless AUDIO_BITRATE_KBPS is set to re-encode it.
 """
 
 import json
+import logging
 import re
 import subprocess
 from pathlib import Path
@@ -13,6 +14,8 @@ import yt_dlp
 
 from . import db, ytdl
 from .config import AUDIO_BITRATE_KBPS, MAX_HEIGHT, MEDIA_DIR, SUBTITLE_LANGS
+
+log = logging.getLogger("wren")
 
 
 def _video_format(max_height: int) -> str:
@@ -69,7 +72,7 @@ def _subtitle_langs() -> list[str]:
 def _subtitle_opts() -> dict:
     if not SUBTITLE_LANGS:
         return {}
-    # A failed subtitle download is only a warning in yt-dlp, never a failed episode.
+    # yt-dlp fails the whole video when these fail; download() then retries without them.
     return {
         "writesubtitles": True,
         "writeautomaticsub": True,
@@ -183,6 +186,19 @@ def _thumb_file(video_id: str) -> Path | None:
     return p if p.exists() else None
 
 
+def _download_without_subtitles(info: dict, mode: str) -> dict:
+    opts = _ydl_opts(mode)
+    for key in _subtitle_opts():
+        opts.pop(key, None)
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            return ydl.process_ie_result(info, download=True)
+    except yt_dlp.utils.DownloadError as e:
+        if is_rate_limited(e):
+            raise RateLimited(str(e)) from e
+        raise
+
+
 def download(url: str, mode: str = "audio", show_id: int | None = None,
              min_duration: int = 0) -> dict:
     """Download one video and add it to the library.
@@ -194,6 +210,7 @@ def download(url: str, mode: str = "audio", show_id: int | None = None,
         raise ValueError("mode must be 'audio' or 'video'")
     MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 
+    info = None
     try:
         with yt_dlp.YoutubeDL(_ydl_opts(mode)) as ydl:
             # Look first, so skipped videos cost one metadata request and no download.
@@ -203,9 +220,16 @@ def download(url: str, mode: str = "audio", show_id: int | None = None,
                 raise Skipped(reason)
             info = ydl.process_ie_result(info, download=True)
     except yt_dlp.utils.DownloadError as e:
-        if is_rate_limited(e):
+        if info is not None and "video subtitles" in str(e):
+            # yt-dlp gives up on the whole video when only its subtitles fail
+            # (YouTube rate-limits captions separately). Finish without them,
+            # reusing what was already looked up.
+            log.warning("Subtitles failed for %s, downloading without them: %s", info.get("id"), e)
+            info = _download_without_subtitles(info, mode)
+        elif is_rate_limited(e):
             raise RateLimited(str(e)) from e
-        raise
+        else:
+            raise
 
     media = _media_file(info)
     if mode == "audio" and AUDIO_BITRATE_KBPS > 0:
