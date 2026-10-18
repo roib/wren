@@ -402,6 +402,34 @@ def list_pending() -> list[dict]:
 
 # ---- retention ------------------------------------------------------------------
 
+def _remove_episode(conn, ep) -> None:
+    """Delete one copy of an episode: its library row and its files."""
+    conn.execute("DELETE FROM episodes WHERE video_id = ? AND mode = ?", (ep["video_id"], ep["mode"]))
+    (MEDIA_DIR / ep["file"]).unlink(missing_ok=True)
+    if ep["subtitles"]:
+        (MEDIA_DIR / ep["subtitles"]).unlink(missing_ok=True)
+    # The thumbnail may be shared with the other format of the same video.
+    if ep["thumb"] and not conn.execute(
+            "SELECT 1 FROM episodes WHERE thumb = ?", (ep["thumb"],)).fetchone():
+        (MEDIA_DIR / ep["thumb"]).unlink(missing_ok=True)
+
+
+def delete_episode(video_id: str) -> int:
+    """Delete a downloaded episode (all its copies) from the server. Its feed item
+    becomes "skipped" (deleted), so it isn't downloaded again but can be brought
+    back from the show's skipped list. Returns how many copies were removed."""
+    with db.connect() as conn:
+        rows = conn.execute("SELECT video_id, mode, file, thumb, subtitles, title FROM episodes WHERE video_id = ?",
+                            (video_id,)).fetchall()
+        for ep in rows:
+            _remove_episode(conn, ep)
+        conn.execute("UPDATE feed_items SET status = 'skipped', error = 'deleted', next_try = 0 "
+                     "WHERE item_id = ? AND status = 'downloaded'", (video_id,))
+    if rows:
+        log.info("Deleted %s (%s)", rows[0]["title"], ", ".join(r["mode"] for r in rows))
+    return len(rows)
+
+
 def _apply_retention(show: dict) -> int:
     """Delete the show's oldest episodes beyond keep_last (counted separately for
     audio and video copies). Returns how many were removed."""
@@ -415,15 +443,7 @@ def _apply_retention(show: dict) -> int:
                    ORDER BY upload_date DESC, added_at DESC""", (show["id"], mode)).fetchall()
             old += rows[show["keep_last"]:]
         for ep in old:
-            conn.execute("DELETE FROM episodes WHERE video_id = ? AND mode = ?",
-                         (ep["video_id"], ep["mode"]))
-            (MEDIA_DIR / ep["file"]).unlink(missing_ok=True)
-            if ep["subtitles"]:
-                (MEDIA_DIR / ep["subtitles"]).unlink(missing_ok=True)
-            # The thumbnail may be shared with the other format of the same video.
-            if ep["thumb"] and not conn.execute(
-                    "SELECT 1 FROM episodes WHERE thumb = ?", (ep["thumb"],)).fetchone():
-                (MEDIA_DIR / ep["thumb"]).unlink(missing_ok=True)
+            _remove_episode(conn, ep)
     if old:
         log.info("%s: removed %d old episode(s)", show["name"], len(old))
     return len(old)

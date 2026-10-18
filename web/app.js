@@ -16,6 +16,7 @@ const ICONS = {
   copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2.2"/><path d="M15.5 8.5V6.7a2.2 2.2 0 0 0-2.2-2.2H6.7a2.2 2.2 0 0 0-2.2 2.2v6.6a2.2 2.2 0 0 0 2.2 2.2h1.8"/>',
   external: '<path d="M14 5h5v5M19 5l-8 8"/><path d="M18 14v4a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 4 18V7.5A1.5 1.5 0 0 1 5.5 6H10"/>',
   refresh: '<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4h-4"/>',
+  trash: '<path d="M4.5 7h15M9.5 7V5.2c0-.66.54-1.2 1.2-1.2h2.6c.66 0 1.2.54 1.2 1.2V7M6.5 7l.8 11.6a1.6 1.6 0 0 0 1.6 1.4h6.2a1.6 1.6 0 0 0 1.6-1.4L17.5 7"/>',
   alert: '<path d="M12 4.2 3 19.5h18z"/><path d="M12 10v4.2M12 17.2v.1"/>',
   chevronLeft: '<path d="M14.5 5.5 8 12l6.5 6.5"/>',
   chevronRight: '<path d="M9.5 5.5 16 12l-6.5 6.5"/>',
@@ -121,6 +122,7 @@ function friendlyError(err) {
   if (/^too short/.test(err)) return err.replace("too short", "Too short");
   if (err === "older than backfill") return "Older than the episodes picked at subscribe";
   if (err === "title filter") return "Didn't match the title filter";
+  if (err === "deleted") return "Deleted from the server";
   return err.replace(/^(feed: )?ERROR:\s*(\[\w+\]\s*[\w-]+:\s*)?/, "").slice(0, 140);
 }
 
@@ -480,7 +482,29 @@ function episodeRow(e) {
           e.copies.map((c) => h("button", { class: "action", onclick: () => openPlayer(e, c) },
             icon("play"), c.mode === "video" ? "Play video" : "Play audio")),
           h("a", { class: "action subtle", href: e.source_url, target: "_blank", rel: "noopener" },
-            icon("external"), "YouTube")))));
+            icon("external"), "YouTube"),
+          h("button", { class: "action subtle danger", onclick: (ev) => deleteEpisode(e, ev.currentTarget) },
+            icon("trash"), "Delete")))));
+}
+
+// Two taps: the first turns the button into "Tap again to delete" for a few seconds.
+async function deleteEpisode(e, btn) {
+  if (!btn.classList.contains("confirm")) {
+    btn.classList.add("confirm");
+    btn.lastChild.textContent = e.copies.length > 1 ? "Tap again to delete both" : "Tap again to delete";
+    setTimeout(() => { btn.classList.remove("confirm"); btn.lastChild.textContent = "Delete"; }, 3000);
+    return;
+  }
+  btn.disabled = true;
+  try {
+    await api(`/api/episodes/${encodeURIComponent(e.video_id)}`, { method: "DELETE" });
+    toast(`Deleted “${e.title}”`);
+    expanded = null;
+  } catch (err) {
+    btn.disabled = false;
+    toast(`Couldn't delete: ${err.message}`);
+  }
+  load();
 }
 
 function showView(d) {

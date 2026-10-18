@@ -91,6 +91,14 @@ def resolve(req: ResolveRequest):
         raise HTTPException(502, f"Couldn't look that up: {msg}")
 
 
+@app.delete("/api/episodes/{video_id}", status_code=204)
+def delete_episode(video_id: str):
+    """Delete a downloaded episode, audio and video copies alike, from the server."""
+    if not subscriptions.delete_episode(video_id):
+        raise HTTPException(404, "no downloaded episode with that id")
+    return Response(status_code=204)
+
+
 @app.post("/api/shows/{show_id}/items/{item_id}/queue", status_code=202)
 def requeue(show_id: int, item_id: str):
     if not subscriptions.requeue_item(show_id, item_id):

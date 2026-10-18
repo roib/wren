@@ -273,6 +273,7 @@ main { margin-top: 16px; }
 }
 .action .ic { width: 16px; height: 16px; }
 .action.subtle { color: var(--muted); }
+.action.danger.confirm { color: var(--warn); font-weight: 600; }
 .action:disabled { opacity: 0.5; cursor: default; }
 .action:active:not(:disabled) { opacity: 0.6; }
 
