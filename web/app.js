@@ -891,50 +891,78 @@ function handOffToAudio() {
   else audioEl.addEventListener("loadedmetadata", start, { once: true });
 }
 
-// Hand back without a gap: keep the audio playing while the video gets ready a
-// little ahead, then start the video and stop the audio when they line up.
+// Hand back without a gap: keep the audio playing while the video gets going a
+// little ahead (muted, so iOS actually loads it; it won't buffer a paused
+// video), hold it there until the audio catches up, then switch.
 let handbackToken = 0;
+const HANDBACK_GIVE_UP_MS = 5000;
 
 function handBackToVideo() {
   if (!handoff) return;
   const token = ++handbackToken;
+  const live = () => token === handbackToken && handoff;
   if (audioEl.paused) {
     finishHandback(audioEl.currentTime, false);
     return;
   }
-  let lead = 1.5; // seconds ahead of the audio to cue the video
-  const attempt = () => {
-    if (token !== handbackToken) return;
-    const target = audioEl.currentTime + lead * audioEl.playbackRate;
-    videoEl.currentTime = target;
-    whenReady(videoEl, () => {
-      if (token !== handbackToken || !handoff) return;
-      const wait = (target - audioEl.currentTime) / audioEl.playbackRate;
-      if (wait < 0) {
-        // The video took longer than the lead: cue it further ahead and retry.
-        lead *= 2;
-        if (lead > 12) finishHandback(audioEl.currentTime, true);
-        else attempt();
+  // Never leave the video black: if it's too slow, switch anyway.
+  const giveUp = setTimeout(() => {
+    if (!live()) return;
+    clientLog("handback: video slow to load, switching anyway");
+    finishHandback(audioEl.currentTime, !audioEl.paused);
+  }, HANDBACK_GIVE_UP_MS);
+
+  const attempt = (lead) => {
+    if (!live()) return;
+    videoEl.muted = true;
+    videoEl.playbackRate = audioEl.playbackRate;
+    videoEl.currentTime = audioEl.currentTime + lead * audioEl.playbackRate;
+    videoEl.play().catch(() => {});
+    whenPlayable(videoEl, () => {
+      if (!live()) return;
+      const ahead = (videoEl.currentTime - audioEl.currentTime) / audioEl.playbackRate;
+      if (ahead < 0.1) {
+        // Loading took longer than the lead: cue further ahead and try again.
+        if (lead >= 8) { clearTimeout(giveUp); finishHandback(audioEl.currentTime, true); }
+        else attempt(lead * 2);
         return;
       }
+      videoEl.pause(); // hold the loaded frame until the audio gets there
       setTimeout(() => {
-        if (token === handbackToken && handoff) finishHandback(target, true, true);
-      }, wait * 1000);
+        if (!live()) return;
+        clearTimeout(giveUp);
+        finishHandback(videoEl.currentTime, true, true);
+      }, ahead * 1000);
     });
   };
-  attempt();
+  attempt(1);
 }
 
-function whenReady(el, fn) {
-  if (el.readyState >= 3 && !el.seeking) fn();
-  else el.addEventListener("canplay", fn, { once: true });
+// Calls fn once the element has finished seeking and has data to play.
+function whenPlayable(el, fn) {
+  const ready = () => !el.seeking && el.readyState >= 3;
+  if (ready()) { fn(); return; }
+  const check = () => {
+    if (!ready()) return;
+    for (const type of ["playing", "canplay", "seeked"]) el.removeEventListener(type, check);
+    fn();
+  };
+  for (const type of ["playing", "canplay", "seeked"]) el.addEventListener(type, check);
 }
 
 function finishHandback(t, play, alreadyCued = false) {
   media = videoEl; // switch first, so the audio's pause event is ignored
   handoff = false;
+  handbackToken++;
+  videoEl.muted = false;
   if (!alreadyCued) videoEl.currentTime = t;
-  const reveal = () => videoEl.classList.remove("stale");
+  let shown = false;
+  const reveal = () => {
+    if (shown) return;
+    shown = true;
+    videoEl.classList.remove("stale");
+  };
+  setTimeout(reveal, 1500); // whatever happens, don't stay black
   if (play) {
     videoEl.addEventListener("playing", reveal, { once: true });
     videoEl.play().catch((err) => { clientLog(`handback play failed: ${err.name}`); reveal(); });

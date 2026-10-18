@@ -622,22 +622,25 @@ body.has-player #toast { bottom: calc(env(safe-area-inset-bottom) + 96px); }
 #media { transition: opacity 0.25s; }
 #media.stale { opacity: 0; transition: none; }
 #sheet.is-video .video-wrap { display: block; }
-.video-controls { position: absolute; right: 8px; bottom: 8px; display: flex; gap: 8px; }
-.fs-btn {
-  width: 36px;
-  height: 36px;
+/* CC and full screen sit in a small row under the video, out of the picture. */
+.video-controls { display: none; justify-content: flex-end; gap: 8px; margin: -12px 0 12px; }
+#sheet.is-video .video-controls { display: flex; }
+.vbtn {
+  height: 30px;
+  min-width: 36px;
+  padding: 0 10px;
   border-radius: 999px;
-  display: grid;
+  display: inline-grid;
   place-items: center;
-  background: rgba(0, 0, 0, 0.5);
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
-  color: #fff;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
-.fs-btn .ic { width: 18px; height: 18px; }
-.fs-btn:active { opacity: 0.7; }
-.fs-btn.cc { font-size: 12px; font-weight: 700; letter-spacing: 0.02em; }
-.fs-btn.cc[aria-pressed="true"] { background: #fff; color: #000; }
+.vbtn .ic { width: 16px; height: 16px; }
+.vbtn.cc[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+.vbtn:active { opacity: 0.7; }
 video::cue { background: rgba(0, 0, 0, 0.65); color: #fff; font-size: 0.85em; }
 #sheet.is-video #sheet-art { display: none; }
 
