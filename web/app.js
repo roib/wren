@@ -1191,44 +1191,48 @@ function setupMediaSession(ep) {
 // iOS home-screen apps lose their audio session a few seconds after pausing in
 // the background, and from then on the lock screen's play button can't make a
 // sound until the app is opened (WebKit bug 243258). So a pause from the lock
-// screen is "soft": the episode pauses, but a silent clip keeps looping on a
-// separate element so the session stays alive and play works. After
+// screen is "soft": the episode pauses, but a Web Audio context keeps playing an
+// inaudible hiss so the session stays alive and play works. Web Audio isn't a
+// media element, so the lock screen keeps showing the paused episode (a looping
+// silent <audio> took over Now Playing and showed "playing"). After
 // SOFT_PAUSE_MAX_MS it becomes a real pause, to save battery.
 const SOFT_PAUSE_MAX_MS = 10 * 60 * 1000;
-const keepalive = new Audio(silentWavUrl());
-keepalive.loop = true; // never reach a natural end, which also closes the session
+let actx = null; // created and started by a tap, then suspended until needed
 let softPausedAt = 0; // when the current soft pause started; 0 when not soft-paused
+let softTimer = null;
 
 if (navigator.audioSession) {
   try { navigator.audioSession.type = "playback"; } catch {}
 }
 
-// Two seconds of 16-bit mono silence as a WAV blob URL (about 32 KB, no network).
-function silentWavUrl(seconds = 2, rate = 8000) {
-  const n = seconds * rate;
-  const buf = new ArrayBuffer(44 + n * 2);
-  const v = new DataView(buf);
-  const str = (o, t) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
-  str(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); str(8, "WAVE");
-  str(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
-  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
-  str(36, "data"); v.setUint32(40, n * 2, true);
-  return URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
-}
-
-// Called from a tap, so iOS lets the silent clip start later from the background.
+// Called from a tap, so iOS lets the context run later from the background.
 function unlockKeepalive() {
-  if (softPausedAt) return;
-  keepalive.muted = true;
-  keepalive.play().catch(() => {});
-  keepalive.pause();
-  keepalive.muted = false;
+  if (actx || !(window.AudioContext || window.webkitAudioContext)) return;
+  try {
+    actx = new (window.AudioContext || window.webkitAudioContext)();
+    // Two seconds of noise at about -80 dB: inaudible, but not digital silence,
+    // which WebKit may treat as "not playing".
+    const buf = actx.createBuffer(1, actx.sampleRate * 2, actx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * 1e-4;
+    const src = actx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    src.connect(actx.destination);
+    src.start();
+    actx.suspend();
+    actx.addEventListener("statechange", () => {
+      if (softPausedAt) clientLog(`keepalive ${actx.state}`);
+    });
+  } catch (err) {
+    actx = null;
+    clientLog(`keepalive unavailable: ${err.name}`);
+  }
 }
 
 function pauseFromSystem() {
-  // While soft-paused the lock screen may still show a pause button (the silent
-  // clip is "playing"), so treat that press as play. Ignore one arriving right
-  // after the pause, though: iOS sometimes sends a second one.
+  // If iOS still shows a pause button while soft-paused, treat that press as
+  // play. Ignore one arriving right after the pause: iOS sometimes sends two.
   if (softPausedAt) {
     if (Date.now() - softPausedAt < 1500) return clientLog("pause (lock screen) repeated, ignored");
     return resumeFromSystem("lock screen pause button");
@@ -1243,68 +1247,52 @@ function pauseFromSystem() {
 }
 
 function startSoftPause(where) {
+  if (!actx) return clientLog(`pause (lock screen) at ${where}: no keepalive, plain pause`);
   softPausedAt = Date.now();
-  keepalive.currentTime = 0;
-  keepalive.play().then(() => {
-    clientLog(`soft pause at ${where}: silent keepalive playing`);
-    showPausedOnLockScreen();
+  clearTimeout(softTimer);
+  softTimer = setTimeout(() => endSoftPause("time limit, now a real pause"), SOFT_PAUSE_MAX_MS);
+  actx.resume().then(() => {
+    clientLog(`soft pause at ${where}: keepalive ${actx.state}`);
+    // Report again a bit later, in case iOS suspends it in the background.
+    setTimeout(() => { if (softPausedAt) clientLog(`soft pause +5s: keepalive ${actx.state}`); }, 5000);
   }).catch((err) => {
     softPausedAt = 0;
     clientLog(`soft pause at ${where}: keepalive blocked (${err.name}), plain pause`);
   });
 }
 
-// Make the lock screen show the episode paused at its position, not the silent clip.
-function showPausedOnLockScreen() {
-  const ms = navigator.mediaSession;
-  if (!ms) return;
-  ms.playbackState = "paused";
-  try {
-    if (media.duration) ms.setPositionState({ duration: media.duration, position: Math.min(media.currentTime, media.duration), playbackRate: 1 });
-  } catch {}
-}
-
 function endSoftPause(reason) {
+  clearTimeout(softTimer);
   if (!softPausedAt) return;
   const mins = ((Date.now() - softPausedAt) / 60000).toFixed(1);
   softPausedAt = 0;
-  keepalive.pause();
-  if (navigator.mediaSession) {
-    navigator.mediaSession.playbackState = "none";
-    try { navigator.mediaSession.setPositionState(); } catch {}
-  }
+  actx?.suspend();
   if (reason) clientLog(`soft pause ended after ${mins} min: ${reason}`);
 }
-
-keepalive.addEventListener("timeupdate", () => {
-  if (softPausedAt && Date.now() - softPausedAt > SOFT_PAUSE_MAX_MS) endSoftPause("time limit, now a real pause");
-});
-keepalive.addEventListener("pause", () => {
-  // iOS stopped the silent clip itself (another app took the audio, a call...).
-  if (softPausedAt) { softPausedAt = 0; clientLog("soft pause interrupted by iOS"); }
-});
 
 // Resume from the lock screen / Control Center, from where we paused. Logged so
 // on-device behaviour shows up in the server log.
 function resumeFromSystem(source) {
   wantPlaying = true;
   const el = media;
-  const soft = softPausedAt ? ` after ${Math.round((Date.now() - softPausedAt) / 1000)}s soft pause` : " (no keepalive)";
+  const soft = softPausedAt
+    ? ` after ${Math.round((Date.now() - softPausedAt) / 1000)}s soft pause (keepalive ${actx?.state})`
+    : " (no soft pause)";
   const wasSoft = !!softPausedAt;
-  softPausedAt = 0; // so the keepalive's pause event isn't read as an interruption
+  softPausedAt = 0;
+  clearTimeout(softTimer);
   const t = current && !isDone(current) ? (getPos(current) || el.currentTime) : el.currentTime;
   if (Math.abs(el.currentTime - t) > 0.5) el.currentTime = t;
   const t0 = performance.now();
   el.play().then(() => {
-    // Stop the silence only once the episode is playing, so the session never lapses.
-    if (wasSoft) { keepalive.pause(); navigator.mediaSession.playbackState = "playing"; }
-    try { navigator.mediaSession.setPositionState(); } catch {}
+    // Stop the hiss only once the episode is playing, so the session never lapses.
+    if (wasSoft) actx?.suspend();
     clientLog(`resume (${source})${soft} at ${Math.round(t)}s: play ok in ${Math.round(performance.now() - t0)}ms`);
     setTimeout(() => {
       clientLog(`resume check: ${el.paused ? "paused" : "playing"}, advanced ${(el.currentTime - t).toFixed(1)}s in ~2s`);
     }, 2000);
   }).catch((err) => {
-    keepalive.pause();
+    actx?.suspend();
     clientLog(`resume (${source})${soft} failed: ${err.name} ${err.message}`);
   });
 }
