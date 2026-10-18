@@ -3,7 +3,7 @@
 // - /api/library: network first, cache fallback (episode list works offline)
 // - /media/*: served from the media cache when downloaded, with Range support
 //   (Safari requires 206 responses to play/seek audio and video)
-const SHELL = "wren-shell-v3";
+const SHELL = "wren-shell-v4";
 const DATA = "wren-data-v1";
 const MEDIA = "wren-media-v1"; // must match app.js
 const SHELL_FILES = [
