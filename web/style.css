@@ -51,11 +51,29 @@ body {
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior: none;
   -webkit-text-size-adjust: 100%;
-  padding: 0 20px calc(env(safe-area-inset-bottom) + 40px);
-  max-width: 680px;
-  margin-inline: auto;
+  /* App layout: a fixed nav bar on top and one scrolling content area below it,
+     ending above the mini player, so the scroll indicator stays in that area
+     instead of running the full height of the screen. */
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
 }
-body.has-player { padding-bottom: calc(env(safe-area-inset-bottom) + 110px); }
+
+#scroller {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 20px calc(env(safe-area-inset-bottom) + 32px);
+}
+body.has-player #scroller {
+  margin-bottom: calc(env(safe-area-inset-bottom) + 80px);
+  padding-bottom: 16px;
+}
+#scroller > header,
+#scroller > main { max-width: 640px; margin-left: auto; margin-right: auto; }
 
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 a { color: inherit; }
@@ -86,15 +104,14 @@ img { display: block; }
    Once the large title scrolls off, a compact title fades in (like iOS). */
 :root { --nav-h: 44px; }
 .nav {
-  position: sticky;
-  top: 0;
+  position: relative;
+  flex-shrink: 0;
   z-index: 10;
   display: flex;
   align-items: center;
   justify-content: space-between;
   height: calc(env(safe-area-inset-top) + var(--nav-h));
   padding: env(safe-area-inset-top) 10px 0;
-  margin: 0 -20px;
   background: var(--bg);
   border-bottom: 1px solid transparent;
   transition: border-color 0.2s;
@@ -316,7 +333,7 @@ main { margin-top: 18px; }
 /* Settings tabs: pinned under the title while the subscription list scrolls. */
 .tabs-wrap {
   position: sticky;
-  top: calc(env(safe-area-inset-top) + var(--nav-h));
+  top: 0;
   z-index: 5;
   background: var(--bg);
   padding: 4px 0 16px;
@@ -562,28 +579,32 @@ body.has-player #toast { bottom: calc(env(safe-area-inset-bottom) + 96px); }
   margin-top: 4px;
 }
 
+/* Five equal slots, each control centred in its own, so a wider speed label
+   ("1.25×") can't push the other buttons around. */
 .transport {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
   align-items: center;
-  justify-content: space-between;
-  margin-top: 16px;
+  justify-items: center;
+  margin: 16px -8px 0;
   flex-shrink: 0;
 }
+/* A large plain glyph, no circle behind it (like Apple Podcasts). */
 .play-btn {
   width: 72px;
   height: 72px;
   border-radius: 50%;
-  background: var(--fg);
-  color: var(--bg);
+  background: none;
+  color: var(--fg);
   display: grid;
   place-items: center;
-  transition: transform 0.1s;
+  transition: transform 0.1s, opacity 0.1s;
 }
-.play-btn:active { transform: scale(0.94); }
-.play-btn .ic { width: 32px; height: 32px; }
+.play-btn:active { transform: scale(0.9); opacity: 0.7; }
+.play-btn .ic { width: 52px; height: 52px; }
 .chip {
-  min-width: 52px;
-  padding: 6px 10px;
+  width: 64px;
+  padding: 6px 4px;
   border-radius: 999px;
   background: var(--surface);
   font-size: 14px;
@@ -591,9 +612,10 @@ body.has-player #toast { bottom: calc(env(safe-area-inset-bottom) + 96px); }
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
-.chip.sleep { display: inline-flex; align-items: center; justify-content: center; gap: 4px; color: var(--muted); }
-.chip.sleep .ic { width: 16px; height: 16px; }
-.chip.sleep.on { background: var(--fg); color: var(--bg); }
+.chip.sleep { display: inline-flex; align-items: center; justify-content: center; color: var(--muted); }
+.chip.sleep .ic { width: 18px; height: 18px; }
+.chip.sleep.on { color: var(--fg); }
+#remain.sleeping { color: var(--fg); font-weight: 600; }
 
 /* Sleep timer menu: pops up above the moon button, like iOS context menus. */
 .sheet-inner { position: relative; }

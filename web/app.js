@@ -31,6 +31,7 @@ const ICONS = {
   chevronDown: '<path d="M5.5 9 12 15.5 18.5 9"/>',
   refresh: '<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4h-4"/>',
   moon: '<path d="M19.5 14.6A7.8 7.8 0 1 1 9.4 4.5a6.3 6.3 0 0 0 10.1 10.1z"/>',
+  moonFill: '<path d="M19.5 14.6A7.8 7.8 0 1 1 9.4 4.5a6.3 6.3 0 0 0 10.1 10.1z" fill="currentColor"/>',
 };
 
 function svg(name) {
@@ -837,22 +838,27 @@ const SLEEP_OPTIONS = [
 let sleepValue = 0; // 0 (off), minutes, or "end"
 let sleepAt = null; // wall-clock deadline for timed choices
 
+// Seconds until the sleep timer pauses playback, or null when it's off.
+function sleepSecondsLeft(episodeLeft) {
+  if (sleepValue === "end") return Math.max(0, episodeLeft || 0);
+  if (sleepAt) return Math.max(0, Math.ceil((sleepAt - Date.now()) / 1000));
+  return null;
+}
+
 function syncSleep() {
   const btn = $("sleep");
-  let label = "";
-  if (sleepValue === "end") label = "End";
-  else if (sleepValue) label = `${Math.max(1, Math.ceil((sleepAt - Date.now()) / 60000))}m`;
-  btn.innerHTML = svg("moon");
-  if (label) btn.append(label);
+  btn.innerHTML = svg(sleepValue ? "moonFill" : "moon");
   btn.classList.toggle("on", sleepValue !== 0);
+  const left = sleepAt ? Math.max(1, Math.ceil((sleepAt - Date.now()) / 60000)) : 0;
   btn.setAttribute("aria-label", sleepValue === 0 ? "Sleep timer: off"
-    : sleepValue === "end" ? "Sleep timer: end of episode" : `Sleep timer: ${label} left`);
+    : sleepValue === "end" ? "Sleep timer: end of episode" : `Sleep timer: ${left} min left`);
 }
 
 function setSleep(value) {
   sleepValue = value;
   sleepAt = typeof value === "number" && value ? Date.now() + value * 60000 : null;
   syncSleep();
+  syncTime();
 }
 
 function checkSleep() {
@@ -860,8 +866,6 @@ function checkSleep() {
     media.pause();
     setSleep(0);
     setStatus("Sleep timer ended");
-  } else if (sleepAt) {
-    syncSleep(); // keep the minutes left current
   }
 }
 
@@ -896,7 +900,13 @@ $("sleep-backdrop").addEventListener("click", closeSleepMenu);
 
 // timeupdate keeps firing while audio plays in the background, unlike timers
 // that iOS may slow down, so check the deadline there too.
-setInterval(checkSleep, 15000);
+// Tick the countdown every second while a timer is on (it runs even when paused).
+setInterval(() => {
+  if (!sleepValue) return;
+  checkSleep();
+  syncTime();
+  syncSleep();
+}, 1000);
 
 function markCurrentDone() {
   if (!current || isDone(current)) return;
@@ -948,7 +958,11 @@ function syncTime() {
   $("seek").style.setProperty("--pct", `${pct}%`);
   $("mini-bar").style.width = `${pct}%`;
   $("cur").textContent = fmt(t);
-  $("remain").textContent = `-${fmt(d - t)}`;
+  // With a sleep timer on, the right-hand time counts down to sleep instead
+  // (like Apple Podcasts): "ᶻz 4:51".
+  const left = sleepSecondsLeft(d - t);
+  $("remain").textContent = left === null ? `-${fmt(d - t)}` : `ᶻz ${fmt(left)}`;
+  $("remain").classList.toggle("sleeping", left !== null);
 }
 
 $("play").addEventListener("click", togglePlay);
@@ -1054,12 +1068,12 @@ function syncNav() {
   const navBottom = $("nav").getBoundingClientRect().bottom;
   $("nav").classList.toggle("scrolled", $("view-title").getBoundingClientRect().bottom <= navBottom + 4);
 }
-window.addEventListener("scroll", syncNav, { passive: true });
+$("scroller").addEventListener("scroll", syncNav, { passive: true });
 
 function onRoute() {
   visitSnapshot.clear();
   render();
-  window.scrollTo(0, 0);
+  $("scroller").scrollTop = 0;
   syncNav();
   if (onSettings()) loadSubscriptions();
   else clearTimeout(subsTimer);
