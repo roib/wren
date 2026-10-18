@@ -5,6 +5,19 @@ const videoEl = $("media");
 const audioEl = $("audio");
 let media = audioEl;
 
+// Whether playback is *meant* to be running: set by the user (and the sleep
+// timer), not by iOS pausing video when the app goes to the background.
+let wantPlaying = false;
+
+// Send a line to the server log (podman logs wren | grep client). sendBeacon
+// still gets through while the app is being backgrounded.
+function clientLog(msg) {
+  try {
+    navigator.sendBeacon("/api/client-log",
+      new Blob([JSON.stringify({ msg })], { type: "application/json" }));
+  } catch {}
+}
+
 // Listen on both elements, but only react to the one that's active, so a
 // switch between them can't save or show the wrong episode's state.
 function onMedia(type, handler) {
@@ -789,6 +802,8 @@ function play(ep) {
 
   const isVideo = ep.mode === "video";
   const next = isVideo ? videoEl : audioEl;
+  handoff = false;
+  wantPlaying = true;
   if (next !== media) {
     // Stop and unload the other element before switching.
     media.pause();
@@ -815,9 +830,63 @@ function play(ep) {
   }, { once: true });
 
   media.play().catch(() => {}); // autoplay may be blocked until user gesture
+  if (isVideo) unlockAudio(ep);
   setupMediaSession(ep);
   if (isVideo) openSheet();
   render();
+}
+
+// ---- background audio for video episodes ------------------------------------
+// iOS pauses <video> when the app goes to the background. For video episodes,
+// hand playback to the <audio> element (same file) on the way out, and back to
+// the video on return. The audio element is "unlocked" by the tap that started
+// the episode, so iOS lets it start later without another tap.
+let handoff = false; // true while <audio> is standing in for a video episode
+
+function unlockAudio(ep) {
+  audioEl.src = ep.media_url;
+  audioEl.preload = "metadata"; // don't start fetching the big video file twice
+  audioEl.muted = true;
+  audioEl.play().catch(() => {}); // within the tap: clears iOS's play restriction
+  audioEl.pause();
+  audioEl.muted = false;
+}
+
+function handOffToAudio() {
+  if (handoff || media !== videoEl || !current || current.mode !== "video" || !wantPlaying) return;
+  const t = videoEl.currentTime;
+  const rate = videoEl.playbackRate;
+  if (!audioEl.src.endsWith(current.media_url)) audioEl.src = current.media_url;
+  media = audioEl;
+  handoff = true;
+  videoEl.pause();
+  const start = () => {
+    audioEl.currentTime = t;
+    audioEl.playbackRate = rate;
+    audioEl.play()
+      .then(() => clientLog(`handoff: video -> audio at ${Math.round(t)}s`))
+      .catch((err) => {
+        clientLog(`handoff blocked at ${Math.round(t)}s: ${err.name} ${err.message}`);
+        media = videoEl;
+        handoff = false;
+      });
+  };
+  if (audioEl.readyState >= 1) start();
+  else audioEl.addEventListener("loadedmetadata", start, { once: true });
+}
+
+function handBackToVideo() {
+  if (!handoff) return;
+  const t = audioEl.currentTime;
+  const playing = !audioEl.paused;
+  media = videoEl; // switch first, so the audio's pause event is ignored
+  handoff = false;
+  audioEl.pause();
+  videoEl.currentTime = t;
+  if (playing) videoEl.play().catch((err) => clientLog(`handback play failed: ${err.name}`));
+  clientLog(`handback: audio -> video at ${Math.round(t)}s (${playing ? "playing" : "paused"})`);
+  syncPlayButtons();
+  syncTime();
 }
 
 function openSheet() {
@@ -912,6 +981,7 @@ function setSleep(value) {
 
 function checkSleep() {
   if (sleepAt && Date.now() >= sleepAt) {
+    wantPlaying = false;
     media.pause();
     setSleep(0);
     setStatus("Sleep timer ended");
@@ -971,8 +1041,8 @@ function setupMediaSession(ep) {
     artwork: ep.thumb_url ? [{ src: ep.thumb_url, sizes: "1280x720", type: "image/jpeg" }] : [],
   });
   const ms = navigator.mediaSession;
-  ms.setActionHandler("play", () => media.play());
-  ms.setActionHandler("pause", () => media.pause());
+  ms.setActionHandler("play", () => { wantPlaying = true; media.play().catch(() => {}); });
+  ms.setActionHandler("pause", () => { wantPlaying = false; media.pause(); });
   ms.setActionHandler("seekbackward", (d) => skip(-(d.seekOffset || 15)));
   ms.setActionHandler("seekforward", (d) => skip(d.seekOffset || 30));
   ms.setActionHandler("seekto", (d) => { media.currentTime = d.seekTime; });
@@ -983,7 +1053,13 @@ function skip(delta) {
 }
 
 function togglePlay() {
-  media.paused ? media.play().catch(() => {}) : media.pause();
+  if (media.paused) {
+    wantPlaying = true;
+    media.play().catch(() => {});
+  } else {
+    wantPlaying = false;
+    media.pause();
+  }
 }
 
 function syncPlayButtons() {
@@ -1089,6 +1165,7 @@ onMedia("pause", () => {
   }
 });
 onMedia("ended", () => {
+  wantPlaying = false;
   markCurrentDone();
   if (sleepValue === "end") setSleep(0);
 });
@@ -1275,7 +1352,14 @@ document.addEventListener("click", (e) => {
 });
 window.addEventListener("hashchange", () => onRoute());
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState !== "visible") return;
+  if (document.visibilityState === "hidden") {
+    if (current?.mode === "video") {
+      clientLog(`hidden: video ${videoEl.paused ? "already paused" : "playing"}, wantPlaying=${wantPlaying}`);
+    }
+    handOffToAudio();
+    return;
+  }
+  handBackToVideo();
   loadLibrary(true);
   if (onSettings()) loadSubscriptions();
 });

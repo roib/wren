@@ -171,6 +171,17 @@ def pending():
     return {"worker": background.status(), "items": subscriptions.list_pending()}
 
 
+class ClientLog(BaseModel):
+    msg: str
+
+
+@app.post("/api/client-log", status_code=204)
+def client_log(entry: ClientLog):
+    """Lets the app record what happened on the phone (e.g. background hand-off)."""
+    log.info("client: %s", entry.msg[:300])
+    return Response(status_code=204)
+
+
 @app.get("/api/queue")
 def queue():
     with db.connect() as conn:
