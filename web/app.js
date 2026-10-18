@@ -1061,7 +1061,12 @@ async function enableAlerts(btn) {
     await api("/api/push/subscribe", { method: "POST", body: sub.toJSON() });
     toast("Alerts are on");
   } catch (err) {
-    toast(`Couldn't turn on alerts: ${err.message}`, 6000);
+    // Chromium builds without Google's API keys (common on Linux), and Brave
+    // with Google push turned off, can't reach a push service at all.
+    toast(/push service/i.test(err.message)
+      ? "This browser can't receive push notifications. Use Chrome, Firefox or Safari, or in Brave turn on "
+        + "“Use Google services for push messaging”."
+      : `Couldn't turn on notifications: ${err.message}`, 9000);
   }
   await loadPushState();
   render();
