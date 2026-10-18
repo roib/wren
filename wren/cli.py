@@ -48,9 +48,6 @@ def main() -> None:
     p_unsub = sub.add_parser("unsubscribe", help="stop following a show (keeps its episodes)")
     p_unsub.add_argument("show_id", type=int)
 
-    p_subs = sub.add_parser("fetch-subtitles", help="add subtitles to video episodes that lack them")
-    p_subs.add_argument("video_id", nargs="?", help="just this episode (default: all missing)")
-
     p_sync = sub.add_parser("sync", help="check subscriptions and download new episodes")
     p_sync.add_argument("show_id", type=int, nargs="?")
 
@@ -109,25 +106,6 @@ def main() -> None:
             parser.exit(1, f"wren: no show with id {args.show_id}\n")
         subscriptions.unsubscribe(args.show_id)
         print(f"Unsubscribed from {show['name']} (its episodes stay in the library)")
-    elif args.cmd == "fetch-subtitles":
-        import time as _time
-        from . import db, downloader, subscriptions
-
-        with db.connect() as conn:
-            q = "SELECT video_id, source_url, title FROM episodes WHERE mode = 'video'"
-            rows = conn.execute(q + (" AND video_id = ?" if args.video_id else " AND subtitles IS NULL"),
-                                (args.video_id,) if args.video_id else ()).fetchall()
-        if not rows:
-            print("No video episodes need subtitles.")
-        for n, r in enumerate(rows):
-            if n:
-                _time.sleep(subscriptions.pause_seconds())  # go easy on YouTube
-            try:
-                subs = downloader.fetch_subtitles(r["video_id"], r["source_url"])
-            except downloader.RateLimited:
-                print("YouTube is rate-limiting; try again later.")
-                break
-            print(f"{'✓' if subs else '–'} {r['title']}" + ("" if subs else " (no subtitles available)"))
     elif args.cmd == "sync":
         from . import subscriptions
 
