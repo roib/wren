@@ -1,11 +1,13 @@
+import logging
 import mimetypes
+from contextlib import asynccontextmanager
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import db, downloader
-from .config import MEDIA_DIR, WEB_DIR
+from . import db, subscriptions, worker
+from .config import MEDIA_DIR, WEB_DIR, WORKER_ENABLED
 
 # Slim container images lack /etc/mime.types; without these, media is served as
 # application/octet-stream, which iOS Safari may refuse to play.
@@ -14,25 +16,30 @@ mimetypes.add_type("video/mp4", ".mp4")
 mimetypes.add_type("image/jpeg", ".jpg")
 mimetypes.add_type("application/manifest+json", ".webmanifest")
 
-app = FastAPI(title="wren")
+log = logging.getLogger("wren")
+if not log.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s wren: %(message)s", "%Y-%m-%d %H:%M:%S"))
+    log.addHandler(handler)
+    log.setLevel(logging.INFO)
+    log.propagate = False
 
-# Simple in-memory job status; good enough until there's a real queue.
-jobs: dict[str, dict] = {}
+background = worker.Worker()
 
 
-class AddRequest(BaseModel):
-    url: str
-    mode: str = "audio"
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if WORKER_ENABLED:
+        background.start()
+    yield
+    if WORKER_ENABLED:
+        background.stop()
 
 
-def _run_download(job_id: str, url: str, mode: str) -> None:
-    jobs[job_id] = {"url": url, "mode": mode, "status": "downloading"}
-    try:
-        ep = downloader.download(url, mode)
-        jobs[job_id] |= {"status": "done", "title": ep["title"]}
-    except Exception as e:  # surface yt-dlp errors to the client
-        jobs[job_id] |= {"status": "error", "error": str(e)}
+app = FastAPI(title="wren", lifespan=lifespan)
 
+
+# ---- library ----------------------------------------------------------------------
 
 @app.get("/api/library")
 def library():
@@ -43,19 +50,106 @@ def library():
     return episodes
 
 
+# ---- manual downloads ---------------------------------------------------------------
+
+class AddRequest(BaseModel):
+    url: str
+    mode: str = "audio"
+
+
 @app.post("/api/add", status_code=202)
-def add(req: AddRequest, background: BackgroundTasks):
+def add(req: AddRequest):
     if req.mode not in ("audio", "video"):
         raise HTTPException(400, "mode must be 'audio' or 'video'")
-    job_id = f"{len(jobs) + 1}"
-    jobs[job_id] = {"url": req.url, "mode": req.mode, "status": "queued"}
-    background.add_task(_run_download, job_id, req.url, req.mode)
-    return {"job_id": job_id}
+    job_id = worker.add_job(req.url, req.mode)
+    background.nudge()
+    return {"job_id": str(job_id)}
 
 
 @app.get("/api/jobs")
 def list_jobs():
-    return jobs
+    # Keyed by id, as the app polls jobs[job_id].
+    return {str(j["id"]): j for j in worker.list_jobs()}
+
+
+# ---- subscriptions -----------------------------------------------------------------
+
+class SubscribeRequest(BaseModel):
+    url: str
+    mode: str = "audio"
+    keep_last: int = 10
+    backfill: int = 3
+    min_duration: int = 300
+    title_filter: str | None = None
+
+
+class ShowUpdate(BaseModel):
+    name: str | None = None
+    mode: str | None = None
+    keep_last: int | None = None
+    min_duration: int | None = None
+    title_filter: str | None = None
+    enabled: bool | None = None
+
+
+@app.get("/api/shows")
+def list_shows():
+    return subscriptions.list_shows()
+
+
+@app.post("/api/shows", status_code=201)
+def subscribe(req: SubscribeRequest):
+    try:
+        show = subscriptions.subscribe(**req.model_dump())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:  # network / yt-dlp trouble while looking up the show
+        raise HTTPException(502, f"couldn't load that show: {e}")
+    background.nudge()
+    return show
+
+
+@app.patch("/api/shows/{show_id}")
+def update_show(show_id: int, req: ShowUpdate):
+    try:
+        return subscriptions.update_show(show_id, **req.model_dump(exclude_unset=True))
+    except KeyError:
+        raise HTTPException(404, "no such show")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/shows/{show_id}", status_code=204)
+def unsubscribe(show_id: int):
+    if not subscriptions.get_show(show_id):
+        raise HTTPException(404, "no such show")
+    subscriptions.unsubscribe(show_id)
+    return Response(status_code=204)
+
+
+@app.post("/api/shows/{show_id}/refresh", status_code=202)
+def refresh_show(show_id: int):
+    if not subscriptions.get_show(show_id):
+        raise HTTPException(404, "no such show")
+    background.refresh(show_id)
+    return {"ok": True}
+
+
+@app.post("/api/refresh", status_code=202)
+def refresh_all():
+    background.refresh()
+    return {"ok": True}
+
+
+@app.get("/api/queue")
+def queue():
+    with db.connect() as conn:
+        items = [dict(r) for r in conn.execute(
+            """SELECT f.show_id, s.name AS show, f.item_id, f.title, f.attempts, f.error, f.next_try
+               FROM feed_items f JOIN shows s ON s.id = f.show_id
+               WHERE f.status = 'queued' ORDER BY f.rowid""")]
+    jobs = [j for j in worker.list_jobs() if j["status"] in ("queued", "running")]
+    return {"worker": background.status(), "jobs": jobs, "items": items}
 
 
 # StaticFiles serves files via FileResponse, which handles HTTP Range requests

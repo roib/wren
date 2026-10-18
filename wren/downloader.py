@@ -10,7 +10,7 @@ from pathlib import Path
 
 import yt_dlp
 
-from . import db
+from . import db, ytdl
 from .config import AUDIO_BITRATE_KBPS, MAX_HEIGHT, MEDIA_DIR
 
 
@@ -26,13 +26,12 @@ def _video_format(max_height: int) -> str:
 
 def _ydl_opts(mode: str) -> dict:
     opts = {
+        **ytdl.base_opts(),
         "outtmpl": str(MEDIA_DIR / "%(id)s.%(ext)s"),
         "writethumbnail": True,
         "noplaylist": True,
         "quiet": False,
         "noprogress": True,
-        # YouTube needs a JS runtime to solve its player challenges.
-        "js_runtimes": {"node": {}, "deno": {}},
         "postprocessors": [
             {"key": "FFmpegThumbnailsConvertor", "format": "jpg"},
         ],

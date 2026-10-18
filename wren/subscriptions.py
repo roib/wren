@@ -19,6 +19,14 @@ def _now() -> int:
     return int(time.time())
 
 
+def _check_regex(pattern: str | None) -> None:
+    if pattern:
+        try:
+            re.compile(pattern)
+        except re.error as e:
+            raise ValueError(f"invalid title filter: {e}") from None
+
+
 # ---- shows ------------------------------------------------------------------
 
 def list_shows() -> list[dict]:
@@ -44,8 +52,7 @@ def subscribe(url: str, mode: str = "audio", keep_last: int = 10, backfill: int 
     """Add a show. Its newest `backfill` episodes are queued; older ones are ignored."""
     if mode not in ("audio", "video"):
         raise ValueError("mode must be 'audio' or 'video'")
-    if title_filter:
-        re.compile(title_filter)  # fail now rather than on every sync
+    _check_regex(title_filter)  # fail now rather than on every sync
 
     feed_url = feeds.feed_url_for(url)
     with db.connect() as conn:
@@ -78,6 +85,33 @@ def subscribe(url: str, mode: str = "audio", keep_last: int = 10, backfill: int 
         for item, reason in reversed(decisions):
             _insert_item(conn, show_id, item, reason)
     log.info("Subscribed to %s (%d queued)", show["name"], queued)
+    return show
+
+
+EDITABLE = {"name", "mode", "keep_last", "min_duration", "title_filter", "enabled"}
+
+
+def update_show(show_id: int, **fields) -> dict:
+    """Change a subscription's settings. A lower keep_last takes effect immediately."""
+    unknown = set(fields) - EDITABLE
+    if unknown:
+        raise ValueError(f"can't change {', '.join(sorted(unknown))}")
+    if "mode" in fields and fields["mode"] not in ("audio", "video"):
+        raise ValueError("mode must be 'audio' or 'video'")
+    _check_regex(fields.get("title_filter"))
+    if "enabled" in fields:
+        fields["enabled"] = int(bool(fields["enabled"]))
+    if fields:
+        cols = ", ".join(f"{k} = ?" for k in fields)
+        with db.connect() as conn:
+            if not conn.execute(f"UPDATE shows SET {cols} WHERE id = ?",
+                                (*fields.values(), show_id)).rowcount:
+                raise KeyError(show_id)
+    show = get_show(show_id)
+    if show is None:
+        raise KeyError(show_id)
+    if "keep_last" in fields:
+        _apply_retention(show)
     return show
 
 
@@ -147,46 +181,85 @@ def _set_item(show_id: int, item_id: str, **fields) -> None:
                      (*fields.values(), show_id, item_id))
 
 
+RETRY_BASE_SECONDS = 15 * 60
+RETRY_MAX_SECONDS = 6 * 60 * 60
+UPCOMING_RECHECK_SECONDS = 60 * 60
+CLAIM_SECONDS = 60 * 60  # how long a claimed item is hidden from other workers
+
+
+def _download_item(show: dict, item: dict) -> bool:
+    """Try to download one feed item and record the outcome. True if it was downloaded."""
+    if db.has_episode(item["item_id"], show["mode"]):
+        # Already in the library (e.g. added by hand): just claim it.
+        with db.connect() as conn:
+            conn.execute("UPDATE episodes SET show_id = ? WHERE video_id = ? AND mode = ?",
+                         (show["id"], item["item_id"], show["mode"]))
+        _set_item(show["id"], item["item_id"], status="downloaded", error=None, next_try=0)
+        return True
+
+    log.info("%s: downloading %s", show["name"], item["title"])
+    try:
+        downloader.download(item["url"], show["mode"], show_id=show["id"],
+                            min_duration=show["min_duration"])
+    except downloader.Skipped as e:
+        if str(e) == "upcoming":
+            # Premiere hasn't aired yet; keep it queued and look again later.
+            _set_item(show["id"], item["item_id"], error="upcoming",
+                      next_try=_now() + UPCOMING_RECHECK_SECONDS)
+        else:
+            _set_item(show["id"], item["item_id"], status="skipped", error=str(e), next_try=0)
+        log.info("%s: skipped %s (%s)", show["name"], item["title"], e)
+        return False
+    except Exception as e:
+        attempts = item["attempts"] + 1
+        status = "failed" if attempts >= MAX_ATTEMPTS else "queued"
+        backoff = min(RETRY_MAX_SECONDS, RETRY_BASE_SECONDS * 2 ** (attempts - 1))
+        _set_item(show["id"], item["item_id"], status=status, attempts=attempts,
+                  error=str(e)[:500], next_try=_now() + backoff)
+        log.warning("%s: download failed (%d/%d): %s", show["name"], attempts,
+                    MAX_ATTEMPTS, e)
+        return False
+
+    _set_item(show["id"], item["item_id"], status="downloaded", error=None, next_try=0)
+    _apply_retention(show)
+    return True
+
+
 def _download_queue(show: dict) -> int:
-    """Download a show's queued items, oldest first. Returns how many succeeded."""
+    """Try every queued item of a show once, oldest first (ignores retry backoff).
+    Returns how many were downloaded."""
     with db.connect() as conn:
         items = [dict(r) for r in conn.execute(
             """SELECT * FROM feed_items WHERE show_id = ? AND status = 'queued'
                ORDER BY rowid""", (show["id"],))]
-
     done = 0
     for n, item in enumerate(items):
         if n:
             time.sleep(DOWNLOAD_PAUSE_SECONDS)  # go easy on YouTube
-        if db.has_episode(item["item_id"], show["mode"]):
-            # Already in the library (e.g. added by hand): just claim it.
-            with db.connect() as conn:
-                conn.execute("UPDATE episodes SET show_id = ? WHERE video_id = ? AND mode = ?",
-                             (show["id"], item["item_id"], show["mode"]))
-            _set_item(show["id"], item["item_id"], status="downloaded", error=None)
-            continue
-        log.info("%s: downloading %s", show["name"], item["title"])
-        try:
-            downloader.download(item["url"], show["mode"], show_id=show["id"],
-                                min_duration=show["min_duration"])
-        except downloader.Skipped as e:
-            if str(e) == "upcoming":
-                # Premiere hasn't aired yet; leave it queued and try again next sync.
-                _set_item(show["id"], item["item_id"], error="upcoming")
-            else:
-                _set_item(show["id"], item["item_id"], status="skipped", error=str(e))
-            log.info("%s: skipped %s (%s)", show["name"], item["title"], e)
-        except Exception as e:
-            attempts = item["attempts"] + 1
-            status = "failed" if attempts >= MAX_ATTEMPTS else "queued"
-            _set_item(show["id"], item["item_id"], status=status, attempts=attempts,
-                      error=str(e)[:500])
-            log.warning("%s: download failed (%d/%d): %s", show["name"], attempts,
-                        MAX_ATTEMPTS, e)
-        else:
-            _set_item(show["id"], item["item_id"], status="downloaded", error=None)
-            done += 1
+        done += _download_item(show, item)
     return done
+
+
+def download_next() -> bool:
+    """Download the oldest queued item that's due, across all enabled shows.
+    Returns False when there was nothing to do."""
+    now = _now()
+    with db.connect() as conn:
+        row = conn.execute(
+            """SELECT f.*, s.id AS sid FROM feed_items f JOIN shows s ON s.id = f.show_id
+               WHERE f.status = 'queued' AND f.next_try <= ? AND s.enabled = 1
+               ORDER BY f.rowid LIMIT 1""", (now,)).fetchone()
+        if not row:
+            return False
+        # Claim it, so a concurrent `wren sync` (or a second worker) leaves it alone.
+        claimed = conn.execute(
+            """UPDATE feed_items SET next_try = ? WHERE show_id = ? AND item_id = ?
+               AND status = 'queued' AND next_try <= ?""",
+            (now + CLAIM_SECONDS, row["show_id"], row["item_id"], now)).rowcount
+        show = dict(conn.execute("SELECT * FROM shows WHERE id = ?", (row["sid"],)).fetchone())
+    if claimed:
+        _download_item(show, dict(row))
+    return True
 
 
 # ---- retention ------------------------------------------------------------------
@@ -214,6 +287,18 @@ def _apply_retention(show: dict) -> int:
 
 
 # ---- sync -------------------------------------------------------------------------
+
+def check_feeds(show_ids: list[int] | None = None) -> int:
+    """Check enabled shows (or the given ones) for new episodes. Returns how many were queued."""
+    with db.connect() as conn:
+        if show_ids is None:
+            shows = [dict(r) for r in conn.execute("SELECT * FROM shows WHERE enabled = 1")]
+        else:
+            marks = ",".join("?" * len(show_ids))
+            shows = [dict(r) for r in conn.execute(
+                f"SELECT * FROM shows WHERE id IN ({marks})", show_ids)]
+    return sum(_check_feed(show) for show in shows)
+
 
 def sync(show_id: int | None = None) -> dict:
     """Check feeds, download new episodes and apply retention for one or all shows."""

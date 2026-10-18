@@ -16,6 +16,8 @@ from dataclasses import dataclass
 
 import yt_dlp
 
+from . import ytdl
+
 LIST_LIMIT = 15  # how many of the newest videos to look at per check
 USER_AGENT = "Mozilla/5.0 (compatible; wren/0.1)"
 
@@ -37,11 +39,11 @@ class Feed:
 
 def _ydl() -> yt_dlp.YoutubeDL:
     return yt_dlp.YoutubeDL({
+        **ytdl.base_opts(),
         "quiet": True,
         "extract_flat": "in_playlist",
         "playlistend": LIST_LIMIT,
         "skip_download": True,
-        "js_runtimes": {"node": {}, "deno": {}},
     })
 
 

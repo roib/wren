@@ -49,7 +49,20 @@ CREATE TABLE IF NOT EXISTS feed_items (
     attempts   INTEGER NOT NULL DEFAULT 0,
     error      TEXT,
     first_seen INTEGER NOT NULL,
+    next_try   INTEGER NOT NULL DEFAULT 0,  -- don't attempt before this time (retry backoff)
     PRIMARY KEY (show_id, item_id)
+);
+
+-- Manual "add this URL" downloads, processed by the background worker.
+CREATE TABLE IF NOT EXISTS jobs (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    url        TEXT NOT NULL,
+    mode       TEXT NOT NULL CHECK (mode IN ('audio', 'video')),
+    status     TEXT NOT NULL CHECK (status IN ('queued', 'running', 'done', 'error')),
+    title      TEXT,
+    error      TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
 );
 """
 
@@ -64,13 +77,18 @@ def _migrate(conn: sqlite3.Connection) -> None:
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(episodes)")}
     if "show_id" not in cols:
         conn.execute("ALTER TABLE episodes ADD COLUMN show_id INTEGER")
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(feed_items)")}
+    if "next_try" not in cols:
+        conn.execute("ALTER TABLE feed_items ADD COLUMN next_try INTEGER NOT NULL DEFAULT 0")
+    # WAL lets the API read while the worker thread writes.
+    conn.execute("PRAGMA journal_mode = WAL")
     _migrated = True
 
 
 @contextmanager
 def connect():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     try:
         conn.execute("PRAGMA foreign_keys = ON")
@@ -92,7 +110,10 @@ def upsert_episode(ep: dict) -> None:
 
 def list_episodes() -> list[dict]:
     with connect() as conn:
-        rows = conn.execute("SELECT * FROM episodes ORDER BY added_at DESC").fetchall()
+        rows = conn.execute(
+            """SELECT e.*, s.name AS show FROM episodes e
+               LEFT JOIN shows s ON s.id = e.show_id
+               ORDER BY e.added_at DESC""").fetchall()
     return [dict(r) for r in rows]
 
 
