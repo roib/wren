@@ -106,7 +106,11 @@ class ShowUpdate(BaseModel):
 
 @app.get("/api/shows")
 def list_shows():
-    return subscriptions.list_shows()
+    shows = subscriptions.list_shows()
+    slugs = podcast.feed_slugs(shows)
+    for s in shows:
+        s["feed_path"] = f"/feeds/{slugs[s['id']]}.xml"
+    return shows
 
 
 @app.post("/api/shows", status_code=201)
@@ -211,12 +215,8 @@ def _feed_response(xml: str) -> Response:
     return Response(xml, media_type="application/rss+xml; charset=utf-8")
 
 
-@app.get("/feeds/show/{show_id}.xml")
-def show_feed(show_id: int, request: Request):
-    show = subscriptions.get_show(show_id)
-    if not show:
-        raise HTTPException(404, "No such show")
-    eps = [ep for ep in db.list_episodes() if ep["show_id"] == show_id]
+def _show_feed(show: dict, request: Request) -> Response:
+    eps = [ep for ep in db.list_episodes() if ep["show_id"] == show["id"]]
     base = _base_url(request)
     return _feed_response(podcast.render(
         show["name"], f"{show['name']}, downloaded by Wren.", eps, base, f"{base}{request.url.path}"))
@@ -230,6 +230,25 @@ def singles_feed(request: Request):
     base = _base_url(request)
     return _feed_response(podcast.render(
         "Wren: single episodes", "Episodes added to Wren one at a time.", eps, base, f"{base}{request.url.path}"))
+
+
+@app.get("/feeds/show/{show_id}.xml")
+def show_feed_by_id(show_id: int, request: Request):
+    """By id: keeps working if a show is renamed."""
+    show = subscriptions.get_show(show_id)
+    if not show:
+        raise HTTPException(404, "No such show")
+    return _show_feed(show, request)
+
+
+@app.get("/feeds/{name}.xml")
+def show_feed(name: str, request: Request):
+    shows = subscriptions.list_shows()
+    slugs = podcast.feed_slugs(shows)
+    show = next((s for s in shows if slugs[s["id"]] == name), None)
+    if not show:
+        raise HTTPException(404, "No such show")
+    return _show_feed(show, request)
 
 
 # StaticFiles serves files via FileResponse, which handles HTTP Range requests

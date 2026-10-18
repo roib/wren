@@ -641,7 +641,7 @@ function subscriptionRow(s) {
             h("button", {
               class: "action subtle",
               tabindex: open ? null : "-1",
-              onclick: () => copyFeed(`/feeds/show/${s.id}.xml`),
+              onclick: () => copyFeed(s.feed_path),
             }, "Copy feed"),
             h("button", {
               class: `action subtle${isConfirming ? " confirm" : ""}`,

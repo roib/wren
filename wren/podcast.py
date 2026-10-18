@@ -1,10 +1,31 @@
 """Podcast RSS feeds of the library, so native podcast apps can play Wren's episodes."""
 
+import re
 from datetime import datetime, timezone
 from email.utils import format_datetime
 from xml.sax.saxutils import escape
 
 from .config import MEDIA_DIR
+
+RESERVED = {"singles", "show"}
+
+
+def slug(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "show"
+
+
+def feed_slugs(shows: list[dict]) -> dict[int, str]:
+    """A readable, unique feed name per show id ("andrew-huberman"). Clashes,
+    and names Wren uses itself, get the id appended ("show-7")."""
+    out, taken = {}, set(RESERVED)
+    for s in sorted(shows, key=lambda s: s["id"]):
+        name = slug(s["name"])
+        if name in taken:
+            name = f"{name}-{s['id']}"
+        taken.add(name)
+        out[s["id"]] = name
+    return out
+
 
 MIME = {".m4a": "audio/mp4", ".mp4": "video/mp4", ".mp3": "audio/mpeg"}
 
