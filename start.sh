@@ -8,6 +8,7 @@ if [ "${WREN_UPDATE_YTDLP:-1}" = "1" ]; then
     export PYTHONPATH=/tmp/ytdlp
   else
     echo "wren: couldn't update yt-dlp, using the built-in one" >&2
+    touch /tmp/ytdlp-update-failed  # Wren alerts about this during the day
     tail -n 3 /tmp/ytdlp-update.log >&2
   fi
 fi

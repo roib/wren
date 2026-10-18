@@ -16,14 +16,16 @@ starts rate-limiting. Manual adds and refresh requests run whenever asked
 import datetime as dt
 import logging
 import random
+import shutil
 import threading
 import time
 from collections import deque
+from pathlib import Path
 
 import yt_dlp
 
-from . import db, downloader, subscriptions
-from .config import (ACTIVE_HOURS, BLOCK_PAUSE_MINUTES, MAX_DOWNLOADS_PER_HOUR,
+from . import db, downloader, push, subscriptions
+from .config import (ACTIVE_HOURS, BLOCK_PAUSE_MINUTES, MAX_DOWNLOADS_PER_HOUR, MEDIA_DIR,
                      POLL_JITTER_MINUTES, POLL_MINUTES, TIMEZONE)
 
 log = logging.getLogger("wren")
@@ -98,6 +100,7 @@ def _run_next_job() -> bool:
     except Exception as e:
         _update_job(job["id"], status="error", error=str(e)[:500])
         log.warning("Download failed: %s", e)
+        push.alert(f"job:{job['id']}", "Couldn't add an episode", f"{job['url']}: {push.short_error(e)}", "/#/singles")
     else:
         _update_job(job["id"], status="done", title=ep["title"], error=None)
     return True
@@ -111,6 +114,57 @@ def _recover() -> None:
         conn.execute("UPDATE feed_items SET next_try = 0 WHERE status = 'queued' AND error IS NULL")
         conn.execute("DELETE FROM jobs WHERE status IN ('done', 'error') AND updated_at < ?",
                      (_now() - JOB_HISTORY_DAYS * 86400,))
+
+
+# ---- daily health checks -------------------------------------------------------------
+
+LOW_DISK_BYTES = 50 * 10**9
+_checked_on: str | None = None
+
+
+def daily_checks(now: float) -> None:
+    """Once a day, during active hours (so nothing arrives in the night): alert
+    about a failed yt-dlp update, low disk space and shows that went quiet."""
+    global _checked_on
+    today = dt.datetime.fromtimestamp(now, TIMEZONE).date()
+    if _checked_on == today.isoformat():
+        return
+    _checked_on = today.isoformat()
+    try:
+        if Path("/tmp/ytdlp-update-failed").exists():
+            push.alert(f"ytdlp:{today}", "yt-dlp didn't update",
+                       f"Wren is using its built-in yt-dlp ({yt_dlp.version.__version__}). "
+                       "Downloads may break if YouTube changed something.")
+        free = shutil.disk_usage(MEDIA_DIR).free
+        if free < LOW_DISK_BYTES:
+            push.alert(f"disk:{today}", "Running low on space", f"Only {free / 1e9:.0f} GB left for downloads.")
+        for show, days, usual in quiet_shows(today):
+            push.alert(f"quiet:{show['id']}:{show['newest']}", f"{show['name']} has gone quiet",
+                       f"No new episode in {days} days (usually every {usual}). "
+                       "The channel may have moved its full episodes elsewhere.", f"/#/show/{show['id']}")
+    except Exception:
+        log.exception("Daily checks failed")
+
+
+def quiet_shows(today: dt.date) -> list[tuple[dict, int, str]]:
+    """Enabled shows whose newest episode is much older than their usual gap:
+    more than 3x the median gap between their episodes, and at least two weeks."""
+    out = []
+    with db.connect() as conn:
+        shows = [dict(r) for r in conn.execute("SELECT id, name FROM shows WHERE enabled = 1")]
+        for s in shows:
+            dates = sorted({r[0] for r in conn.execute(
+                "SELECT upload_date FROM episodes WHERE show_id = ? AND upload_date IS NOT NULL", (s["id"],))})
+            if len(dates) < 3:
+                continue
+            days = [dt.datetime.strptime(d, "%Y%m%d").date() for d in dates]
+            gaps = sorted((b - a).days for a, b in zip(days, days[1:]))
+            median = max(1, gaps[len(gaps) // 2])
+            age = (today - days[-1]).days
+            if age > max(14, 3 * median):
+                usual = "day" if median == 1 else f"{median} days" if median < 14 else f"{round(median / 7)} weeks"
+                out.append(({**s, "newest": dates[-1]}, age, usual))
+    return out
 
 
 # ---- worker ----------------------------------------------------------------------
@@ -211,6 +265,8 @@ class Worker:
     def _step(self) -> bool:
         """Do one unit of work. Returns False when there's nothing to do right now."""
         now = time.time()
+        if is_active(now):
+            daily_checks(now)
         with self._lock:
             requested, self._refresh = self._refresh, set()
         due = now >= self.next_poll
@@ -261,6 +317,9 @@ class Worker:
             self.activity = "paused"
             log.warning("YouTube is rate-limiting us; pausing downloads for %d min",
                         BLOCK_PAUSE_MINUTES)
+            resume = dt.datetime.fromtimestamp(self.paused_until, TIMEZONE).strftime("%-I:%M %p")
+            push.alert(f"paused:{int(self.paused_until)}", "Downloads paused",
+                       f"YouTube is rate-limiting the server. Wren will try again at {resume}.")
             return False
 
         self.activity = "idle"

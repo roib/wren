@@ -12,7 +12,7 @@ WORKDIR /app
 
 # Dependencies first so code changes don't reinstall them
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir "yt-dlp[default]" fastapi "uvicorn[standard]" pillow tzdata
+RUN pip install --no-cache-dir "yt-dlp[default]" fastapi "uvicorn[standard]" pillow pywebpush tzdata
 
 COPY wren ./wren
 COPY web ./web

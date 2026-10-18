@@ -8,6 +8,7 @@ dependencies = [
     "fastapi",
     "uvicorn[standard]",
     "pillow",  # podcast-feed artwork
+    "pywebpush",  # alerts
     "tzdata",  # timezone data for WREN_TZ, even on systems without it
 ]
 

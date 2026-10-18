@@ -183,6 +183,7 @@ async function load() {
     if (r.name === "show") details.set(r.id, await api(`/api/shows/${r.id}/detail`));
     else if (r.name === "singles") details.set("singles", await api("/api/singles"));
     else if (r.name !== "add") overview = await api("/api/overview");
+    if (r.name === "status" && !pushState) await loadPushState();
     loadError = null;
   } catch (err) {
     loadError = err.message;
@@ -832,9 +833,105 @@ function statusView(data) {
     jobs.length ? section("Single episodes", h("div", { class: "card list-card" },
       jobs.map((j) => kv(j.title || j.url,
         j.status === "error" ? "Failed" : j.status === "done" ? ago(j.updated_at) : j.status === "running" ? "Downloading" : "Queued")))) : null,
+    alertsSection(),
     section("Storage", h("div", { class: "card list-card" },
       kv("Episodes", join(plural(data.totals.episodes, "episode"), fmtBytes(data.totals.bytes) || "0 MB")),
       kv("Free space", `${fmtBytes(data.disk.free)} of ${fmtBytes(data.disk.total)}`))));
+}
+
+// ---- alerts (Web Push) ------------------------------------------------------------
+
+// Whether this device can get alerts and has them on: { supported, permission, subscribed }.
+let pushState = null;
+
+async function loadPushState() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+    pushState = { supported: false };
+    return;
+  }
+  try {
+    const reg = await Promise.race([navigator.serviceWorker.ready, new Promise((_, no) => setTimeout(no, 4000))]);
+    const sub = await reg.pushManager.getSubscription();
+    // Re-register it with the server, in case the server forgot it.
+    if (sub) api("/api/push/subscribe", { method: "POST", body: sub.toJSON() }).catch(() => {});
+    pushState = { supported: true, permission: Notification.permission, subscribed: !!sub };
+  } catch {
+    pushState = { supported: false };
+  }
+}
+
+function base64UrlToBytes(s) {
+  const b = atob(s.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(s.length / 4) * 4, "="));
+  return Uint8Array.from(b, (c) => c.charCodeAt(0));
+}
+
+async function enableAlerts(btn) {
+  btn.disabled = true;
+  try {
+    // Must be the first thing after the tap: iOS only asks from a user gesture.
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") throw new Error("notifications weren't allowed");
+    const reg = await navigator.serviceWorker.ready;
+    const { key } = await api("/api/push/key");
+    const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: base64UrlToBytes(key) });
+    await api("/api/push/subscribe", { method: "POST", body: sub.toJSON() });
+    toast("Alerts are on");
+  } catch (err) {
+    toast(`Couldn't turn on alerts: ${err.message}`, 6000);
+  }
+  await loadPushState();
+  render();
+}
+
+async function disableAlerts() {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) {
+      await api("/api/push/unsubscribe", { method: "POST", body: { endpoint: sub.endpoint } });
+      await sub.unsubscribe();
+    }
+    toast("Alerts are off");
+  } catch (err) {
+    toast(`Couldn't turn off alerts: ${err.message}`);
+  }
+  await loadPushState();
+  render();
+}
+
+async function testAlert() {
+  try {
+    await api("/api/push/test", { method: "POST" });
+    toast("Test alert sent");
+  } catch (err) {
+    toast(`Couldn't send: ${err.message}`);
+  }
+}
+
+const ALERTS_ABOUT = "Wren lets you know when YouTube blocks downloads, an episode fails for good, a show can't be "
+  + "checked or goes quiet, space runs low, or yt-dlp couldn't update.";
+
+function alertsSection() {
+  const p = pushState;
+  let body;
+  if (!p) body = h("p", { class: "none" }, "Checking…");
+  else if (!p.supported) {
+    body = h("p", { class: "none" }, "Open Wren from your home screen to turn on alerts.");
+  } else if (p.permission === "denied") {
+    body = h("p", { class: "none" }, "Notifications are blocked. Allow them in iOS Settings → Notifications → Wren.");
+  } else if (p.subscribed) {
+    body = [
+      kv("Alerts", "On for this device"),
+      h("div", { class: "hero-actions pad" },
+        h("button", { class: "action", onclick: testAlert }, "Send a test alert"),
+        h("button", { class: "action subtle", onclick: disableAlerts }, "Turn off")),
+    ];
+  } else {
+    body = h("div", { class: "pad" },
+      h("button", { class: "button strong full", "data-native-tap": true, onclick: (e) => enableAlerts(e.currentTarget) },
+        "Turn on alerts"));
+  }
+  return section("Alerts", h("div", { class: "card list-card" }, body), h("p", { class: "setting-hint section-hint" }, ALERTS_ABOUT));
 }
 
 async function command(path, msg) {
@@ -956,8 +1053,9 @@ document.addEventListener("touchend", (e) => {
   if (tap.target.closest("input, select, textarea, label, audio, video")) return;
   const el = tap.target.closest(TAPPABLE);
   if (!el || el.disabled) return;
-  // Links that leave the app (YouTube, Apple Podcasts) keep iOS's own handling.
-  if (el.matches('a[target="_blank"], a[href^="podcast:"]')) return;
+  // Links that leave the app (YouTube, Apple Podcasts) and buttons that ask iOS
+  // for a permission keep iOS's own handling.
+  if (el.matches('a[target="_blank"], a[href^="podcast:"], [data-native-tap]')) return;
   e.preventDefault(); // skip Safari's own (delayed) click so it doesn't fire twice
   el.click();
 }, { passive: false });
@@ -1028,14 +1126,9 @@ document.addEventListener("visibilitychange", () => {
 
 // ---- boot -----------------------------------------------------------------
 
-// The player version of Wren cached episodes on the phone through a service
-// worker; remove it and its caches to give that space back.
-if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.getRegistrations().then((regs) => regs.forEach((r) => r.unregister())).catch(() => {});
-}
-if ("caches" in window) {
-  caches.keys().then((keys) => keys.forEach((k) => caches.delete(k))).catch(() => {});
-}
+// The service worker delivers alerts (and clears what the old player version
+// saved on the phone).
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 
 document.querySelectorAll("[data-icon]").forEach((el) => el.prepend(icon(el.dataset.icon)));
 onRoute();

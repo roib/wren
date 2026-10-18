@@ -391,6 +391,9 @@ main { margin-top: 16px; }
 .feed-buttons { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
 .hero-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .list-card + .hero-actions { margin-top: 10px; }
+.pad { padding: 12px 14px; }
+.hero-actions.pad { padding-top: 0; }
+.section-hint { margin: 8px 4px 0; }
 
 /* Episode rows: a thumbnail, the title, format badges; tap to open actions. */
 .ep-head {

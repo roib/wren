@@ -57,6 +57,19 @@ CREATE TABLE IF NOT EXISTS feed_items (
     PRIMARY KEY (show_id, item_id)
 );
 
+-- Devices that get Web Push alerts, and which alerts were already sent.
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    endpoint   TEXT PRIMARY KEY,
+    p256dh     TEXT NOT NULL,
+    auth       TEXT NOT NULL,
+    origin     TEXT,            -- the app's address, used as the push contact
+    created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS alerts (
+    key     TEXT PRIMARY KEY,   -- names a problem, e.g. "showerror:7"
+    sent_at INTEGER NOT NULL
+);
+
 -- Manual "add this URL" downloads, processed by the background worker.
 CREATE TABLE IF NOT EXISTS jobs (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import admin, artwork, db, podcast, subscriptions, worker
+from . import admin, artwork, db, podcast, push, subscriptions, worker
 from .config import BASE_URL, MEDIA_DIR, WEB_DIR, WORKER_ENABLED
 
 # Slim container images lack /etc/mime.types; without these, media is served as
@@ -235,6 +235,46 @@ def queue():
                WHERE f.status = 'queued' ORDER BY f.rowid""")]
     jobs = [j for j in worker.list_jobs() if j["status"] in ("queued", "running")]
     return {"worker": background.status(), "jobs": jobs, "items": items}
+
+
+# ---- alerts (Web Push) --------------------------------------------------------------
+
+@app.get("/api/push/key")
+def push_key():
+    return {"key": push.public_key(), "devices": push.subscriber_count()}
+
+
+class PushSubscription(BaseModel):
+    endpoint: str
+    keys: dict[str, str]
+
+
+@app.post("/api/push/subscribe", status_code=204)
+def push_subscribe(sub: PushSubscription, request: Request):
+    try:
+        push.subscribe(sub.model_dump(), _base_url(request))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return Response(status_code=204)
+
+
+class PushEndpoint(BaseModel):
+    endpoint: str
+
+
+@app.post("/api/push/unsubscribe", status_code=204)
+def push_unsubscribe(req: PushEndpoint):
+    push.unsubscribe(req.endpoint)
+    return Response(status_code=204)
+
+
+@app.post("/api/push/test", status_code=202)
+def push_test():
+    if not push.subscriber_count():
+        raise HTTPException(400, "no devices have alerts turned on")
+    push.send("Wren alerts are on", "You'll hear from Wren when something needs your attention.", "/#/status",
+              tag="test")
+    return {"ok": True}
 
 
 # ---- podcast feeds ------------------------------------------------------------------

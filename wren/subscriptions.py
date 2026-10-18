@@ -10,7 +10,7 @@ import random
 import re
 import time
 
-from . import artwork, db, downloader, feeds
+from . import artwork, db, downloader, feeds, push
 from .config import DOWNLOAD_PAUSE, MAX_ATTEMPTS, MEDIA_DIR
 
 log = logging.getLogger("wren")
@@ -176,7 +176,10 @@ def _check_feed(show: dict) -> int:
             conn.execute("UPDATE shows SET last_checked = ?, last_error = ? WHERE id = ?",
                          (_now(), f"feed: {e}", show["id"]))
         log.warning("%s: couldn't fetch feed: %s", show["name"], e)
+        push.alert(f"showerror:{show['id']}", f"{show['name']}: can't check for episodes",
+                   push.short_error(e), f"/#/show/{show['id']}")
         return 0
+    push.clear(f"showerror:{show['id']}")
 
     with db.connect() as conn:
         seen = {r["item_id"] for r in conn.execute(
@@ -282,6 +285,10 @@ def _try_download(show: dict, item: dict) -> bool:
                   error=str(e)[:500], next_try=_now() + backoff)
         log.warning("%s: download failed (%d/%d): %s", show["name"], attempts,
                     MAX_ATTEMPTS, e)
+        if status == "failed":
+            push.alert(f"failed:{show['id']}:{item['item_id']}", f"{show['name']}: download failed",
+                       f"“{item['title'] or item['item_id']}” gave up after {attempts} tries: {push.short_error(e)}",
+                       f"/#/show/{show['id']}")
         return False
 
     _set_item(show["id"], item["item_id"], status="downloaded", error=None, next_try=0)
