@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import db, podcast, subscriptions, worker
+from . import artwork, db, podcast, subscriptions, worker
 from .config import BASE_URL, MEDIA_DIR, WEB_DIR, WORKER_ENABLED
 
 # Slim container images lack /etc/mime.types; without these, media is served as
@@ -219,7 +219,8 @@ def _show_feed(show: dict, request: Request) -> Response:
     eps = [ep for ep in db.list_episodes() if ep["show_id"] == show["id"]]
     base = _base_url(request)
     return _feed_response(podcast.render(
-        show["name"], f"{show['name']}, downloaded by Wren.", eps, base, f"{base}{request.url.path}"))
+        show["name"], f"{show['name']}, downloaded by Wren.", eps, base, f"{base}{request.url.path}",
+        art=artwork.feed_ref(artwork.path_for(show["id"]))))
 
 
 @app.get("/feeds/singles.xml")
@@ -228,8 +229,10 @@ def singles_feed(request: Request):
     shows = {s["id"] for s in subscriptions.list_shows()}
     eps = [ep for ep in db.list_episodes() if ep["show_id"] not in shows]
     base = _base_url(request)
+    artwork.ensure_singles_art()
     return _feed_response(podcast.render(
-        "Wren: single episodes", "Episodes added to Wren one at a time.", eps, base, f"{base}{request.url.path}"))
+        "Wren: single episodes", "Episodes added to Wren one at a time.", eps, base, f"{base}{request.url.path}",
+        art=artwork.feed_ref(artwork.singles_path())))
 
 
 @app.get("/feeds/show/{show_id}.xml")

@@ -10,7 +10,7 @@ import random
 import re
 import time
 
-from . import db, downloader, feeds
+from . import artwork, db, downloader, feeds
 from .config import DOWNLOAD_PAUSE, MAX_ATTEMPTS, MEDIA_DIR
 
 log = logging.getLogger("wren")
@@ -179,7 +179,22 @@ def _check_feed(show: dict) -> int:
                      (_now(), show["id"]))
     if queued:
         log.info("%s: %d new episode(s)", show["name"], queued)
+    _ensure_art(show)
     return queued
+
+
+def _ensure_art(show: dict) -> None:
+    """Make the show's podcast-feed artwork the first time its feed is checked."""
+    if artwork.path_for(show["id"]).exists():
+        return
+    with db.connect() as conn:
+        row = conn.execute("SELECT thumb FROM episodes WHERE show_id = ? AND thumb IS NOT NULL "
+                           "ORDER BY added_at DESC LIMIT 1", (show["id"],)).fetchone()
+    try:
+        if artwork.make_show_art(show, row["thumb"] if row else None):
+            log.info("%s: made podcast artwork", show["name"])
+    except Exception as e:
+        log.warning("%s: couldn't make podcast artwork: %s", show["name"], e)
 
 
 def _set_item(show_id: int, item_id: str, **fields) -> None:

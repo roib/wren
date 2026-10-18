@@ -7,6 +7,7 @@ dependencies = [
     "yt-dlp[default]",
     "fastapi",
     "uvicorn[standard]",
+    "pillow",  # podcast-feed artwork
     "tzdata",  # timezone data for WREN_TZ, even on systems without it
 ]
 
@@ -19,3 +20,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["wren"]
+
+[tool.setuptools.package-data]
+wren = ["*.png"]

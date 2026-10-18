@@ -70,10 +70,13 @@ def _item(ep: dict, base: str) -> str:
     return "<item>" + "".join(parts) + "</item>"
 
 
-def render(title: str, description: str, episodes: list[dict], base: str, self_url: str) -> str:
-    """An RSS 2.0 feed (with iTunes tags) of the given episodes, newest first."""
+def render(title: str, description: str, episodes: list[dict], base: str, self_url: str,
+           art: str | None = None) -> str:
+    """An RSS 2.0 feed (with iTunes tags) of the given episodes, newest first.
+    `art` is the show's artwork relative to MEDIA_DIR (default: the newest
+    episode's thumbnail)."""
     episodes = sorted(episodes, key=_pub_date, reverse=True)
-    art = next((ep["thumb"] for ep in episodes if ep.get("thumb")), None)
+    art = art or next((ep["thumb"] for ep in episodes if ep.get("thumb")), None)
     author = next((ep["channel"] for ep in episodes if ep.get("channel")), None)
     head = [
         f"<title>{escape(title)}</title>",
