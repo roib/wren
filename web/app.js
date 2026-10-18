@@ -450,7 +450,10 @@ function pendingRow(e, onRetry) {
       art(e.thumb_url, "ep-thumb"),
       h("span", { class: "ep-text" },
         h("span", { class: "ep-title" }, e.title || e.source_url),
-        h("span", { class: "ep-meta" }, ...stateText(e), e.duration ? ` · ${fmtDuration(e.duration)}` : null)),
+        h("span", { class: "ep-meta" }, ...stateText(e),
+          // ("Too short (53s)" already gives the length.)
+          [fmtDate(e.upload_date), /^too short/.test(e.error) ? null : fmtDuration(e.duration)]
+            .filter(Boolean).map((x) => ` · ${x}`).join(""))),
       canRetry ? h("button", { class: "action", onclick: () => onRetry(e) }, e.state === "failed" ? "Retry" : "Download") : null));
 }
 

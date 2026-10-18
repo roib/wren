@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS feed_items (
     item_id    TEXT NOT NULL,   -- YouTube video id (or RSS guid)
     url        TEXT NOT NULL,
     title      TEXT,
-    published  TEXT,            -- ISO 8601 timestamp from the feed
+    published  TEXT,            -- YYYYMMDD upload date, approximate (from the show listing)
     status     TEXT NOT NULL CHECK (status IN ('queued', 'downloaded', 'skipped', 'failed')),
     attempts   INTEGER NOT NULL DEFAULT 0,
     error      TEXT,

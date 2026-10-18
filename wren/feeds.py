@@ -11,6 +11,7 @@ normal uploads and past livestreams in newest-first order.
 
 import re
 import urllib.parse
+from datetime import datetime, timezone
 import urllib.request
 from dataclasses import dataclass
 
@@ -33,6 +34,7 @@ class FeedItem:
     duration: int | None
     live_status: str | None
     thumb_url: str | None = None
+    published: str | None = None  # YYYYMMDD, approximate ("3 days ago")
 
 
 @dataclass
@@ -48,6 +50,8 @@ def _ydl(limit: int = LIST_LIMIT) -> yt_dlp.YoutubeDL:
         "extract_flat": "in_playlist",
         "playlistend": limit,
         "skip_download": True,
+        # Flat listings carry no dates; this turns YouTube's "3 days ago" into one.
+        "extractor_args": {"youtubetab": {"approximate_date": [""]}},
     })
 
 
@@ -125,6 +129,10 @@ def feed_url_for(url: str) -> str:
     return _playlist_url("UU" + channel_id[2:])
 
 
+def _day(timestamp: int | None) -> str | None:
+    return datetime.fromtimestamp(timestamp, timezone.utc).strftime("%Y%m%d") if timestamp else None
+
+
 def thumb_url(video_id: str) -> str:
     """YouTube's standard medium-size thumbnail for a video."""
     return f"https://i.ytimg.com/vi/{video_id}/mqdefault.jpg"
@@ -155,6 +163,7 @@ def fetch(feed_url: str) -> Feed:
             duration=int(entry["duration"]) if entry.get("duration") else None,
             live_status=entry.get("live_status"),
             thumb_url=thumb_url(entry["id"]),
+            published=_day(entry.get("timestamp")),
         ))
 
     channel = info.get("channel") or info.get("uploader")

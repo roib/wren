@@ -161,7 +161,7 @@ def _insert_item(conn, show_id: int, item: feeds.FeedItem, skip_reason: str | No
                (show_id, item_id, url, title, published, status, error, first_seen,
                 duration, thumb_url)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (show_id, item.item_id, item.url, item.title, None,
+        (show_id, item.item_id, item.url, item.title, item.published,
          "skipped" if skip_reason else "queued", skip_reason, _now(),
          item.duration, item.thumb_url),
     )
@@ -182,6 +182,11 @@ def _check_feed(show: dict) -> int:
         seen = {r["item_id"] for r in conn.execute(
             "SELECT item_id FROM feed_items WHERE show_id = ?", (show["id"],))}
         new = [i for i in feed.items if i.item_id not in seen and not _is_pending(i)]
+        # Items recorded before dates were kept get theirs filled in.
+        for i in feed.items:
+            if i.item_id in seen and i.published:
+                conn.execute("UPDATE feed_items SET published = ? WHERE show_id = ? AND item_id = ? "
+                             "AND published IS NULL", (i.published, show["id"], i.item_id))
         queued = 0
         for item in reversed(new):  # oldest first, so row order matches upload order
             reason = _feed_skip_reason(show, item)

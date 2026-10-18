@@ -145,6 +145,7 @@ def show_detail(show_id: int) -> dict | None:
         pending.append({
             "video_id": i["item_id"],
             "title": i["title"],
+            "upload_date": i["published"],
             "duration": i["duration"],
             "thumb_url": i["thumb_url"] or feeds.thumb_url(i["item_id"]),
             "source_url": i["url"],
