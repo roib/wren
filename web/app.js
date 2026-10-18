@@ -215,6 +215,7 @@ function render() {
   $("back").hidden = !(show || inSettings);
   $("settings-link").hidden = !!(show || inSettings);
   $("view-title").textContent = inSettings ? "Settings" : show ? show.name : "Shows";
+  $("nav-title").textContent = $("view-title").textContent;
   $("list").hidden = inSettings;
   $("settings").hidden = !inSettings;
 
@@ -983,10 +984,18 @@ syncPlayButtons();
 syncSpeed();
 syncSleep();
 
+// Show the compact nav title once the large title has scrolled under the nav bar.
+function syncNav() {
+  const navBottom = $("nav").getBoundingClientRect().bottom;
+  $("nav").classList.toggle("scrolled", $("view-title").getBoundingClientRect().bottom <= navBottom + 4);
+}
+window.addEventListener("scroll", syncNav, { passive: true });
+
 function onRoute() {
   visitSnapshot.clear();
   render();
   window.scrollTo(0, 0);
+  syncNav();
   if (onSettings()) loadSubscriptions();
   else clearTimeout(subsTimer);
 }

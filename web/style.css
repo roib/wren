@@ -51,7 +51,7 @@ body {
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior: none;
   -webkit-text-size-adjust: 100%;
-  padding: env(safe-area-inset-top) 20px calc(env(safe-area-inset-bottom) + 40px);
+  padding: 0 20px calc(env(safe-area-inset-bottom) + 40px);
   max-width: 680px;
   margin-inline: auto;
 }
@@ -82,8 +82,42 @@ img { display: block; }
 
 /* ---- header ---- */
 
-.top { padding-top: 8px; }
-.nav { display: flex; align-items: center; justify-content: space-between; min-height: 44px; margin: 0 -10px; }
+/* Nav bar: pinned under the status bar so the back button never scrolls away.
+   Once the large title scrolls off, a compact title fades in (like iOS). */
+:root { --nav-h: 44px; }
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: calc(env(safe-area-inset-top) + var(--nav-h));
+  padding: env(safe-area-inset-top) 10px 0;
+  margin: 0 -20px;
+  background: var(--bg);
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.2s;
+}
+.nav.scrolled { border-bottom-color: var(--line); }
+.nav-title {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  max-width: 55%;
+  line-height: var(--nav-h);
+  font-size: 17px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  transition: opacity 0.2s;
+  pointer-events: none;
+}
+.nav.scrolled .nav-title { opacity: 1; }
+.top { padding-top: 0; }
 #back {
   display: inline-flex;
   align-items: center;
@@ -260,7 +294,7 @@ main { margin-top: 18px; }
 /* Settings tabs: pinned under the title while the subscription list scrolls. */
 .tabs-wrap {
   position: sticky;
-  top: 0;
+  top: calc(env(safe-area-inset-top) + var(--nav-h));
   z-index: 5;
   background: var(--bg);
   padding: 4px 0 16px;
