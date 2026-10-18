@@ -16,6 +16,7 @@ RUN pip install --no-cache-dir "yt-dlp[default]" fastapi "uvicorn[standard]" pil
 
 COPY wren ./wren
 COPY web ./web
+COPY start.sh ./
 RUN pip install --no-cache-dir --no-deps .
 
 RUN useradd --create-home --uid 1000 wren \
@@ -31,4 +32,4 @@ ENV WREN_DATA=/data \
 VOLUME /data
 EXPOSE 8000
 
-CMD ["wren", "serve", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["/app/start.sh"]

@@ -20,6 +20,8 @@ import threading
 import time
 from collections import deque
 
+import yt_dlp
+
 from . import db, downloader, subscriptions
 from .config import (ACTIVE_HOURS, BLOCK_PAUSE_MINUTES, MAX_DOWNLOADS_PER_HOUR,
                      POLL_JITTER_MINUTES, POLL_MINUTES, TIMEZONE)
@@ -136,8 +138,8 @@ class Worker:
         self.next_poll = next_active(time.time() + FIRST_POLL_DELAY)
         self._thread = threading.Thread(target=self._run, name="wren-worker", daemon=True)
         self._thread.start()
-        log.info("Worker started; checking shows every %d min between %02d:00 and %02d:00 %s",
-                 POLL_MINUTES, *ACTIVE_HOURS, TIMEZONE.key)
+        log.info("Worker started (yt-dlp %s); checking shows every %d min between %02d:00 and %02d:00 %s",
+                 yt_dlp.version.__version__, POLL_MINUTES, *ACTIVE_HOURS, TIMEZONE.key)
 
     def stop(self) -> None:
         self._stop.set()
@@ -170,6 +172,7 @@ class Worker:
         now = time.time()
         return {
             "activity": self.activity,
+            "ytdlp": yt_dlp.version.__version__,
             "last_poll": int(self.last_poll) if self.last_poll else None,
             "next_poll": int(self.next_poll),
             "poll_minutes": POLL_MINUTES,
