@@ -1,9 +1,18 @@
+import mimetypes
+
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import db, downloader
 from .config import MEDIA_DIR, WEB_DIR
+
+# Slim container images lack /etc/mime.types; without these, media is served as
+# application/octet-stream, which iOS Safari may refuse to play.
+mimetypes.add_type("audio/mp4", ".m4a")
+mimetypes.add_type("video/mp4", ".mp4")
+mimetypes.add_type("image/jpeg", ".jpg")
+mimetypes.add_type("application/manifest+json", ".webmanifest")
 
 app = FastAPI(title="wren")
 

@@ -1,7 +1,7 @@
 """Download a single video/episode with yt-dlp in an iOS-friendly format.
 
 Video: H.264 + AAC in MP4 (plays natively in Safari / iOS).
-Audio: AAC in .m4a, re-encoded to AUDIO_BITRATE_KBPS (speech doesn't need 128k+).
+Audio: AAC in .m4a, kept as-is unless AUDIO_BITRATE_KBPS is set to re-encode it.
 """
 
 import json
@@ -98,7 +98,7 @@ def download(url: str, mode: str = "audio") -> dict:
         info = ydl.extract_info(url, download=True)
 
     media = _media_file(info)
-    if mode == "audio":
+    if mode == "audio" and AUDIO_BITRATE_KBPS > 0:
         _reencode_audio(media, AUDIO_BITRATE_KBPS)
     thumb = _thumb_file(info["id"])
     episode = {
