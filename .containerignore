@@ -1,0 +1,7 @@
+.git
+.venv
+data
+**/__pycache__
+*.egg-info
+Containerfile
+.containerignore
