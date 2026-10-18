@@ -12,6 +12,26 @@ Apple Podcasts or any other podcast app.
 Wren comes with a small web app for managing it, built to feel at home as an
 iPhone home-screen app.
 
+## Why
+
+Mostly: **no injected ads.** The audio a podcast's own feed serves is often
+stitched together at download time by an ad network, with ads chosen for you
+and dropped into the episode, and frequently the same ones over and over.
+Many shows also put full episodes on YouTube, where YouTube shows its ads
+around the video rather than inside the file. Wren downloads that file, so an
+episode comes without the inserted breaks. Ad reads the hosts record as part
+of the show are still there.
+
+It also helps with:
+
+- **Shows that are only on YouTube** can be listened to like any other
+  podcast.
+- **Background listening without YouTube Premium:** episodes play in Apple
+  Podcasts with the screen locked, offline, at any speed, with the queue
+  and resume you're used to.
+- **Video podcasts** can be watched in a podcast app, from a separate video
+  feed.
+
 ## What it does
 
 - **Follows shows.** Subscribe to a YouTube channel or playlist, then choose
