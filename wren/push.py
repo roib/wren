@@ -34,6 +34,7 @@ def _key() -> Vapid02:
                 _vapid = Vapid02()
                 _vapid.generate_keys()
                 _vapid.save_key(str(KEY_FILE))
+                KEY_FILE.chmod(0o600)
                 log.info("Made a Web Push key")
     return _vapid
 
