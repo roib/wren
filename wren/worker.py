@@ -125,6 +125,7 @@ class Worker:
         self.last_poll: float | None = None
         self.next_download_at = 0.0  # earliest time for the next subscription download
         self.paused_until = 0.0  # set when YouTube rate-limits us
+        self.override = False  # "download now": ignore active hours until the queue is empty
         self.activity = "idle"
 
     def start(self) -> None:
@@ -151,6 +152,13 @@ class Worker:
             self._refresh.add(show_id)
         self._wake.set()
 
+    def download_now(self) -> None:
+        """Check every show, then download what's queued even outside active hours.
+        The gap between downloads, the hourly cap and rate-limit pauses still apply."""
+        self.override = True
+        self.next_download_at = 0.0
+        self.refresh()
+
     def status(self) -> dict:
         now = time.time()
         return {
@@ -163,6 +171,7 @@ class Worker:
             "active_now": is_active(now),
             "resume_at": int(next_active(now)),
             "paused_until": int(self.paused_until) if self.paused_until > now else None,
+            "override": self.override,
         }
 
     def _run(self) -> None:
@@ -216,7 +225,7 @@ class Worker:
                 self.next_download_at = time.time() + subscriptions.pause_seconds()
                 return True
 
-            if not is_active(now):
+            if not (self.override or is_active(now)):
                 self.activity = "resting"
                 return False
             if self._hourly_cap_reached(now):
@@ -229,6 +238,7 @@ class Worker:
                 self._recent.append(now)
                 self.next_download_at = time.time() + subscriptions.pause_seconds()
                 return True
+            self.override = False  # queue is empty: back to the normal schedule
         except downloader.RateLimited:
             self.paused_until = time.time() + BLOCK_PAUSE_MINUTES * 60
             self.activity = "paused"

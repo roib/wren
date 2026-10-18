@@ -151,6 +151,12 @@ def refresh_all():
     return {"ok": True}
 
 
+@app.post("/api/download-now", status_code=202)
+def download_now():
+    background.download_now()
+    return {"ok": True}
+
+
 @app.get("/api/queue")
 def queue():
     with db.connect() as conn:

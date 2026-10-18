@@ -34,7 +34,13 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 
-html { background: var(--bg); }
+/* Feel like an app on iPhone: no pinch/double-tap zoom, no rubber-band
+   pull-down past the top or bottom of the page. */
+html {
+  background: var(--bg);
+  overscroll-behavior: none;
+  touch-action: pan-x pan-y;
+}
 
 body {
   margin: 0;
@@ -43,6 +49,8 @@ body {
   font: 16px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
   padding: env(safe-area-inset-top) 20px calc(env(safe-area-inset-bottom) + 40px);
   max-width: 680px;
   margin-inline: auto;
@@ -195,7 +203,7 @@ main { margin-top: 18px; }
 }
 .list-card { padding: 0 16px; gap: 0; }
 
-#add-url {
+.card input[type="url"] {
   font: inherit;
   width: 100%;
   padding: 12px 14px;
@@ -205,7 +213,7 @@ main { margin-top: 18px; }
   color: var(--fg);
   outline: none;
 }
-#add-url:focus { border-color: var(--accent); }
+.card input[type="url"]:focus { border-color: var(--accent); }
 
 .segmented {
   display: grid;
@@ -246,23 +254,24 @@ main { margin-top: 18px; }
   border-bottom: 1px solid var(--line);
 }
 .kv span:last-child { color: var(--muted); }
-.row-btn { width: 100%; text-align: left; padding: 14px 0; color: var(--accent); }
+.row-btn { width: 100%; text-align: left; padding: 16px 0; color: var(--accent); font-weight: 600; }
 .row-btn:disabled { color: var(--faint); cursor: default; }
-.hint { color: var(--muted); font-size: 13px; margin: 8px 4px 0; line-height: 1.45; }
-#sub-list { margin-top: 12px; }
+.hint { color: var(--muted); font-size: 13px; margin: 10px 4px 0; line-height: 1.45; }
+#sub-list { margin-top: 16px; }
 .sub-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 0;
+  gap: 12px;
+  padding: 16px 0;
   border-bottom: 1px solid var(--line);
 }
-.sub-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.sub-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sub-meta { color: var(--muted); font-size: 13px; }
+.sub-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.sub-name { font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 1px; }
+.sub-meta { color: var(--muted); font-size: 14px; }
+.sub-meta.faint { color: var(--faint); font-size: 13px; }
 .sub-warn { color: var(--muted); font-size: 13px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .sub-warn::before { content: "⚠︎ "; }
-.sub-actions { display: flex; align-items: center; flex-shrink: 0; margin-right: -8px; }
+.sub-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; margin-right: -8px; }
 .text-btn { font-size: 14px; color: var(--muted); padding: 8px; border-radius: 8px; }
 .text-btn.confirm { color: var(--fg); font-weight: 600; }
 .icon-btn.spin .ic { animation: spin 0.9s linear infinite; }
@@ -334,35 +343,46 @@ body.has-player #toast { bottom: calc(env(safe-area-inset-bottom) + 96px); }
   transform: translateY(100%);
   transition: transform 0.32s cubic-bezier(0.32, 0.72, 0, 1), visibility 0s 0.32s;
   visibility: hidden;
-  overflow-y: auto;
+  overflow: hidden;
+  overscroll-behavior: contain;
 }
 #sheet.open { transform: none; visibility: visible; transition: transform 0.32s cubic-bezier(0.32, 0.72, 0, 1); }
 
+/* Fixed to the screen height: the artwork shrinks to whatever space is left,
+   so the title, scrubber and controls always fit above the home indicator. */
 .sheet-inner {
   max-width: 520px;
-  min-height: 100%;
+  height: 100%;
   margin: 0 auto;
-  padding: calc(env(safe-area-inset-top) + 8px) 24px calc(env(safe-area-inset-bottom) + 32px);
+  padding: calc(env(safe-area-inset-top) + 4px) 24px calc(env(safe-area-inset-bottom) + 20px);
   display: flex;
   flex-direction: column;
 }
 #sheet-close { align-self: center; color: var(--muted); }
 
-.art { margin: 12px 0 28px; flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0; }
+.art {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 4px 0 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  container-type: size;
+}
 #sheet-art {
-  width: 100%;
-  aspect-ratio: 1;
+  /* As big a square as fits the space between the close button and the title. */
+  width: min(100cqw, 100cqh);
+  height: min(100cqw, 100cqh);
   object-fit: cover;
   border-radius: 18px;
   box-shadow: var(--shadow);
   background: var(--surface);
-  max-height: 52vh;
 }
-#media { display: none; width: 100%; border-radius: 14px; background: #000; max-height: 52vh; }
+#media { display: none; width: 100%; max-height: 100cqh; border-radius: 14px; background: #000; }
 #sheet.is-video #media { display: block; }
 #sheet.is-video #sheet-art { display: none; }
 
-.sheet-meta { margin-bottom: 20px; }
+.sheet-meta { margin-bottom: 16px; flex-shrink: 0; }
 #sheet-title { font-size: 20px; font-weight: 700; line-height: 1.25; letter-spacing: -0.01em; }
 #sheet-channel { font-size: 16px; color: var(--muted); margin-top: 4px; }
 
@@ -406,7 +426,8 @@ body.has-player #toast { bottom: calc(env(safe-area-inset-bottom) + 96px); }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 20px;
+  margin-top: 16px;
+  flex-shrink: 0;
 }
 .play-btn {
   width: 72px;
@@ -430,7 +451,9 @@ body.has-player #toast { bottom: calc(env(safe-area-inset-bottom) + 96px); }
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
-.chip.ghost { visibility: hidden; }
+.chip.sleep { display: inline-flex; align-items: center; justify-content: center; gap: 4px; color: var(--muted); }
+.chip.sleep .ic { width: 16px; height: 16px; }
+.chip.sleep.on { background: var(--fg); color: var(--bg); }
 
 @media (prefers-reduced-motion: reduce) {
   #sheet, #sheet.open, #toast { transition: none; }

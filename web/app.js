@@ -28,6 +28,7 @@ const ICONS = {
   chevronRight: '<path d="M9.5 5.5 16 12l-6.5 6.5"/>',
   chevronDown: '<path d="M5.5 9 12 15.5 18.5 9"/>',
   refresh: '<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4h-4"/>',
+  moon: '<path d="M19.5 14.6A7.8 7.8 0 1 1 9.4 4.5a6.3 6.3 0 0 0 10.1 10.1z"/>',
 };
 
 function svg(name) {
@@ -405,6 +406,7 @@ function workerStatus() {
   let text = "Up to date";
   if (w.paused_until) text = `YouTube is rate-limiting the server · paused until ${clock(w.paused_until)}`;
   else if (w.activity === "checking shows") text = "Checking for new episodes…";
+  else if (due && w.override) text = `Downloading now · ${plural(due, "episode")} to go`;
   else if (due && !w.active_now) text = `${plural(due, "download")} waiting until ${clock(w.resume_at)}`;
   else if (due) text = `Downloading · ${plural(due, "episode")} to go`;
   else if (w.activity === "downloading") text = "Downloading…";
@@ -422,17 +424,19 @@ function renderSubscriptions() {
   list.hidden = false;
   list.replaceChildren(
     ...subs.map(subscriptionRow),
-    h("button", { class: "row-btn", onclick: refreshAll }, "Check for new episodes"));
+    h("button", { class: "row-btn", onclick: downloadNow }, "Check & download now"));
 }
 
 function subscriptionRow(s) {
   const meta = [
     plural(s.episodes, "episode"),
-    s.keep_last > 0 ? `keeps ${s.keep_last}` : "keeps all",
-    s.mode === "video" ? "video" : null,
     s.queued ? `${s.queued} queued` : null,
-    `checked ${ago(s.last_checked)}`,
+    s.mode === "video" ? "video" : null,
   ].filter(Boolean).join(" · ");
+  const detail = [
+    s.keep_last > 0 ? `Keeps ${s.keep_last}` : "Keeps all",
+    `checked ${ago(s.last_checked)}`,
+  ].join(" · ");
   const waiting = retrying(s.id);
   let warn = null;
   if (s.last_error) warn = friendlyError(s.last_error);
@@ -444,6 +448,7 @@ function subscriptionRow(s) {
     h("div", { class: "sub-text" },
       h("span", { class: "sub-name" }, s.name),
       h("span", { class: "sub-meta" }, meta),
+      h("span", { class: "sub-meta faint" }, detail),
       warn ? h("span", { class: "sub-warn" }, warn) : null),
     h("div", { class: "sub-actions" },
       h("button", {
@@ -470,14 +475,16 @@ async function refreshShow(s) {
   }, 4000);
 }
 
-async function refreshAll() {
+// Check every show and download what's queued now, even outside the server's
+// active hours.
+async function downloadNow() {
   try {
-    await fetch("/api/refresh", { method: "POST" });
-    setStatus("Checking for new episodes…");
+    await fetch("/api/download-now", { method: "POST" });
+    setStatus("Checking shows and downloading now…");
   } catch {
     setStatus("Can't reach the server right now.");
   }
-  setTimeout(loadSubscriptions, 4000);
+  setTimeout(loadSubscriptions, 3000);
 }
 
 async function removeShow(s) {
@@ -637,6 +644,86 @@ function closeSheet() {
   $("sheet").setAttribute("aria-hidden", "true");
 }
 
+// ---- swipe down to close the player ------------------------------------------
+
+let drag = null;
+const sheetEl = $("sheet");
+
+sheetEl.addEventListener("touchstart", (e) => {
+  // Leave the scrubber and the video's own controls alone.
+  if (e.touches.length !== 1 || e.target.closest("input, video")) return;
+  drag = { y: e.touches[0].clientY, t: Date.now(), dy: 0 };
+}, { passive: true });
+
+sheetEl.addEventListener("touchmove", (e) => {
+  if (!drag) return;
+  drag.dy = Math.max(0, e.touches[0].clientY - drag.y);
+  sheetEl.style.transition = "none";
+  sheetEl.style.transform = `translateY(${drag.dy}px)`;
+}, { passive: true });
+
+function endDrag() {
+  if (!drag) return;
+  const fast = drag.dy / Math.max(1, Date.now() - drag.t) > 0.6;
+  const close = drag.dy > window.innerHeight / 3 || (fast && drag.dy > 40);
+  // Clearing the inline styles animates from where the finger let go, either
+  // back up or off the bottom.
+  sheetEl.style.transition = "";
+  sheetEl.style.transform = "";
+  if (close) closeSheet();
+  drag = null;
+}
+sheetEl.addEventListener("touchend", endDrag);
+sheetEl.addEventListener("touchcancel", endDrag);
+
+// ---- sleep timer --------------------------------------------------------------
+
+const SLEEP_STEPS = [0, 15, 30, 45, 60, "end"]; // minutes, or the end of the episode
+let sleepStep = 0;
+let sleepAt = null; // wall-clock deadline for timed steps
+
+function syncSleep() {
+  const step = SLEEP_STEPS[sleepStep];
+  const btn = $("sleep");
+  let label = "";
+  if (step === "end") label = "End";
+  else if (step) label = `${Math.max(1, Math.ceil((sleepAt - Date.now()) / 60000))}m`;
+  btn.innerHTML = svg("moon");
+  if (label) btn.append(label);
+  btn.classList.toggle("on", step !== 0);
+  btn.setAttribute("aria-label", step === 0 ? "Sleep timer: off"
+    : step === "end" ? "Sleep timer: end of episode" : `Sleep timer: ${label} left`);
+}
+
+function clearSleep() {
+  sleepStep = 0;
+  sleepAt = null;
+  syncSleep();
+}
+
+function checkSleep() {
+  if (sleepAt && Date.now() >= sleepAt) {
+    media.pause();
+    clearSleep();
+    setStatus("Sleep timer ended");
+  } else if (sleepAt) {
+    syncSleep(); // keep the minutes left current
+  }
+}
+
+$("sleep").addEventListener("click", () => {
+  sleepStep = (sleepStep + 1) % SLEEP_STEPS.length;
+  const step = SLEEP_STEPS[sleepStep];
+  sleepAt = typeof step === "number" && step ? Date.now() + step * 60000 : null;
+  syncSleep();
+  setStatus(step === 0 ? "Sleep timer off"
+    : step === "end" ? "Sleep at the end of this episode" : `Sleep in ${step} minutes`, 2000);
+});
+
+// timeupdate keeps firing while audio plays in the background, unlike timers
+// that iOS may slow down, so check the deadline there too.
+setInterval(checkSleep, 15000);
+
 function markCurrentDone() {
   if (!current || isDone(current)) return;
   setDone(current, true);
@@ -715,7 +802,10 @@ media.addEventListener("pause", () => {
     render();
   }
 });
-media.addEventListener("ended", markCurrentDone);
+media.addEventListener("ended", () => {
+  markCurrentDone();
+  if (SLEEP_STEPS[sleepStep] === "end") clearSleep();
+});
 media.addEventListener("loadedmetadata", () => {
   $("seek").max = Math.floor(media.duration);
   syncTime();
@@ -724,6 +814,7 @@ media.addEventListener("loadedmetadata", () => {
 let lastSave = 0;
 media.addEventListener("timeupdate", () => {
   syncTime();
+  checkSleep();
   if (!current || isDone(current)) return;
   if (media.duration && media.currentTime >= media.duration * DONE_AT) {
     markCurrentDone();
@@ -771,18 +862,37 @@ async function pollJob(jobId) {
 
 // ---- boot -----------------------------------------------------------------
 
+// iOS can ignore user-scalable=no; cancel its pinch gestures directly.
+for (const type of ["gesturestart", "gesturechange", "gestureend"]) {
+  document.addEventListener(type, (e) => e.preventDefault(), { passive: false });
+}
+
 seenSince(); // start the "new episodes" clock on this device's first launch
 document.querySelectorAll("[data-icon]").forEach((el) => el.prepend(icon(el.dataset.icon)));
 syncPlayButtons();
 syncSpeed();
+syncSleep();
 
-window.addEventListener("hashchange", () => {
+function onRoute() {
   visitSnapshot.clear();
   render();
   window.scrollTo(0, 0);
   if (location.hash === "#/settings") loadSubscriptions();
   else clearTimeout(subsTimer);
+}
+
+// In-app links replace the current history entry instead of adding one, so
+// iOS's edge swipe has nothing to go "back" to (it would drag the app's pages,
+// or the player, sideways). The on-screen back button still works.
+document.addEventListener("click", (e) => {
+  const a = e.target.closest('a[href^="#/"]');
+  if (!a || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
+  e.preventDefault();
+  if (a.getAttribute("href") === location.hash) return;
+  history.replaceState(null, "", a.getAttribute("href"));
+  onRoute();
 });
+window.addEventListener("hashchange", onRoute);
 // Pick up newly downloaded episodes while the app is open.
 setInterval(() => {
   if (document.visibilityState === "visible") loadLibrary(true);
