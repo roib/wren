@@ -808,6 +808,7 @@ function play(ep) {
   handoff = false;
   wantPlaying = true;
   videoEl.classList.remove("stale");
+  hideOverlay();
   if (next !== media) {
     // Stop and unload the other element before switching.
     media.pause();
@@ -1189,7 +1190,7 @@ function togglePlay() {
 function syncPlayButtons() {
   const name = media.paused ? "play" : "pause";
   const label = media.paused ? "Play" : "Pause";
-  for (const id of ["play", "mini-play"]) {
+  for (const id of ["play", "mini-play", "ov-play"]) {
     $(id).innerHTML = svg(name);
     $(id).setAttribute("aria-label", label);
   }
@@ -1220,7 +1221,34 @@ function showTime(t) {
 }
 
 $("play").addEventListener("click", togglePlay);
-videoEl.addEventListener("click", togglePlay); // tap the video to pause / play
+// ---- video overlay ------------------------------------------------------------
+// Tapping the picture shows play/pause, CC and full screen; while playing it
+// fades out after a few seconds. Tapping the dim area (not a button) hides it.
+const OVERLAY_HIDE_MS = 3000;
+let overlayTimer = null;
+
+function showOverlay() {
+  $("video-overlay").classList.add("show");
+  scheduleOverlayHide();
+}
+
+function hideOverlay() {
+  clearTimeout(overlayTimer);
+  $("video-overlay").classList.remove("show");
+}
+
+function scheduleOverlayHide() {
+  clearTimeout(overlayTimer);
+  // Stays up while paused, so it's clear how to resume.
+  if (!videoEl.paused) overlayTimer = setTimeout(hideOverlay, OVERLAY_HIDE_MS);
+}
+
+videoEl.addEventListener("click", showOverlay);
+$("video-overlay").addEventListener("click", (e) => {
+  if (e.target === e.currentTarget) hideOverlay();
+  else scheduleOverlayHide(); // a button was used: keep it up a little longer
+});
+$("ov-play").addEventListener("click", togglePlay);
 // Full screen: iPhones only allow it through iOS's own video player
 // (webkitEnterFullscreen); other browsers use the standard API.
 $("fullscreen").addEventListener("click", () => {
@@ -1287,10 +1315,14 @@ document.addEventListener("keydown", (e) => {
   else closeSheet();
 });
 
-onMedia("play", syncPlayButtons);
+onMedia("play", () => {
+  syncPlayButtons();
+  if (media === videoEl && $("video-overlay").classList.contains("show")) scheduleOverlayHide();
+});
 onMedia("ratechange", syncSpeed);
 onMedia("pause", () => {
   syncPlayButtons();
+  if (media === videoEl) clearTimeout(overlayTimer); // keep a visible overlay up while paused
   if (current && !isDone(current)) {
     setPos(current, media.currentTime);
     render();
@@ -1364,7 +1396,7 @@ async function pollJob(jobId) {
 // apps. Speed matters, not timing: iOS keeps nudging a list by fractions of a
 // pixel (and firing scroll events) well after it looks still, and taps then
 // must still work.
-const TAPPABLE = 'button, a[href], [role="menuitemradio"], #sleep-backdrop, video';
+const TAPPABLE = 'button, a[href], [role="menuitemradio"], #sleep-backdrop, video, #video-overlay';
 const MOVING_PX_PER_MS = 0.25; // ~250 px/s: faster than this reads as "still scrolling"
 let lastScroll = { at: 0, top: 0, speed: 0 };
 let tapStart = null;

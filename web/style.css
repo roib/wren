@@ -622,25 +622,47 @@ body.has-player #toast { bottom: calc(env(safe-area-inset-bottom) + 96px); }
 #media { transition: opacity 0.25s; }
 #media.stale { opacity: 0; transition: none; }
 #sheet.is-video .video-wrap { display: block; }
-/* CC and full screen sit in a small row under the video, out of the picture. */
-.video-controls { display: none; justify-content: flex-end; gap: 8px; margin: -12px 0 12px; }
-#sheet.is-video .video-controls { display: flex; }
-.vbtn {
-  height: 30px;
+/* Video overlay: tap the picture to show play/pause, CC and full screen over a
+   dim scrim; it fades out after a few seconds while playing. */
+.video-overlay {
+  position: absolute;
+  inset: 0;
+  border-radius: 14px;
+  background: rgba(0, 0, 0, 0.35);
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+.video-overlay.show { opacity: 1; pointer-events: auto; }
+.ov-play {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+}
+.ov-play .ic { width: 30px; height: 30px; }
+.ov-corner { position: absolute; right: 8px; bottom: 8px; display: flex; gap: 8px; }
+.ovbtn {
+  height: 32px;
   min-width: 36px;
   padding: 0 10px;
   border-radius: 999px;
   display: inline-grid;
   place-items: center;
-  background: var(--surface);
-  color: var(--muted);
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.02em;
 }
-.vbtn .ic { width: 16px; height: 16px; }
-.vbtn.cc[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
-.vbtn:active { opacity: 0.7; }
+.ovbtn .ic { width: 16px; height: 16px; }
+.ovbtn.cc[aria-pressed="true"] { background: #fff; color: #000; }
+.ov-play:active, .ovbtn:active { opacity: 0.7; }
 video::cue { background: rgba(0, 0, 0, 0.65); color: #fff; font-size: 0.85em; }
 #sheet.is-video #sheet-art { display: none; }
 

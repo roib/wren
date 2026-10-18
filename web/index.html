@@ -108,12 +108,15 @@
         <img id="sheet-art" alt="">
         <div class="video-wrap">
           <video id="media" playsinline preload="metadata"></video>
+          <div id="video-overlay" class="video-overlay">
+            <button id="ov-play" class="ov-play" aria-label="Play"></button>
+            <div class="ov-corner">
+              <button id="cc" class="ovbtn cc" aria-label="Subtitles" aria-pressed="false" hidden>CC</button>
+              <button id="fullscreen" class="ovbtn" aria-label="Full screen" data-icon="expand"></button>
+            </div>
+          </div>
         </div>
         <audio id="audio" preload="metadata"></audio>
-      </div>
-      <div class="video-controls">
-        <button id="cc" class="vbtn cc" aria-label="Subtitles" aria-pressed="false" hidden>CC</button>
-        <button id="fullscreen" class="vbtn" aria-label="Full screen" data-icon="expand"></button>
       </div>
       <div class="sheet-meta">
         <div id="sheet-title"></div>
