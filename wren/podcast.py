@@ -1,6 +1,7 @@
 """Podcast RSS feeds of the library, so native podcast apps can play Wren's episodes."""
 
 import re
+import subprocess
 from datetime import datetime, timezone
 from email.utils import format_datetime
 from xml.sax.saxutils import escape
@@ -70,6 +71,27 @@ def _item(ep: dict, base: str) -> str:
     return "<item>" + "".join(parts) + "</item>"
 
 
+PLACEHOLDER = "shows/placeholder.m4a"  # relative to MEDIA_DIR
+
+
+def _placeholder_item(base: str) -> str:
+    """A stand-in episode for a feed with nothing in it yet: Apple Podcasts won't
+    follow a feed without episodes. Five seconds of silence, made once."""
+    path = MEDIA_DIR / PLACEHOLDER
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "anullsrc=r=22050:cl=mono",
+                        "-t", "5", "-c:a", "aac", "-b:a", "32k", str(path)], check=True)
+    when = datetime.fromtimestamp(int(path.stat().st_mtime), timezone.utc)
+    return ("<item><title>Waiting for new episodes</title>"
+            '<guid isPermaLink="false">wren-placeholder</guid>'
+            f"<pubDate>{format_datetime(when)}</pubDate>"
+            f'<enclosure url="{escape(base + "/media/" + PLACEHOLDER)}" length="{path.stat().st_size}" type="audio/mp4"/>'
+            "<description>Nothing has been downloaded for this show yet. Wren adds episodes here as they're "
+            "released, and this placeholder disappears.</description>"
+            "<itunes:duration>0:00:05</itunes:duration></item>")
+
+
 def render(title: str, description: str, episodes: list[dict], base: str, self_url: str,
            art: str | None = None) -> str:
     """An RSS 2.0 feed (with iTunes tags) of the given episodes, newest first.
@@ -99,5 +121,7 @@ def render(title: str, description: str, episodes: list[dict], base: str, self_u
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" '
         'xmlns:atom="http://www.w3.org/2005/Atom">'
-        "<channel>" + "".join(head) + "".join(_item(ep, base) for ep in episodes) + "</channel></rss>\n"
+        "<channel>" + "".join(head)
+        + ("".join(_item(ep, base) for ep in episodes) if episodes else _placeholder_item(base))
+        + "</channel></rss>\n"
     )
