@@ -245,7 +245,7 @@ class Worker:
                 return False
             # Outside active hours with only some shows requested, stick to those.
             only = None if (active or self.override_all) else sorted(self.override_shows)
-            if subscriptions.download_next(only):
+            if subscriptions.download_next(only) or subscriptions.download_next_copy(only):
                 self._recent.append(now)
                 self.next_download_at = time.time() + subscriptions.pause_seconds()
                 return True

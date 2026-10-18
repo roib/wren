@@ -594,7 +594,8 @@ function subscriptionRow(s) {
     `${plural(s.episodes, "episode")} downloaded`,
     s.keep_last > 0 ? `keeps the latest ${s.keep_last}` : "keeps everything",
     s.mode,
-  ].join(" · ");
+    s.video_copy ? `${s.video_copies}/${s.episodes} as video too` : null,
+  ].filter(Boolean).join(" · ");
   const art = subscriptionArt(s);
   const busy = queueInfo?.worker.override_shows?.includes(s.id);
   const isConfirming = confirming.has(s.id);
@@ -643,6 +644,17 @@ function subscriptionRow(s) {
               tabindex: open ? null : "-1",
               onclick: () => copyFeed(s.feed_path),
             }, "Copy feed"),
+            s.mode === "audio" ? h("button", {
+              class: `action subtle${s.video_copy ? " on" : ""}`,
+              "aria-pressed": String(!!s.video_copy),
+              tabindex: open ? null : "-1",
+              onclick: () => setVideoCopy(s, !s.video_copy),
+            }, s.video_copy ? "Video copies: on" : "Video copies: off") : null,
+            s.video_copy ? h("button", {
+              class: "action subtle",
+              tabindex: open ? null : "-1",
+              onclick: () => copyFeed(s.video_feed_path),
+            }, "Copy video feed") : null,
             h("button", {
               class: `action subtle${isConfirming ? " confirm" : ""}`,
               tabindex: open ? null : "-1",
@@ -659,6 +671,22 @@ async function copyFeed(path) {
   } catch {
     setStatus(url, 10000); // clipboard unavailable: show it to copy by hand
   }
+}
+// Audio shows can also get every episode as video, for a separate video feed.
+async function setVideoCopy(s, on) {
+  try {
+    const res = await fetch(`/api/shows/${s.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ video_copy: on }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    setStatus(on ? `Downloading ${s.name} as video too. Its video feed fills in as they arrive.`
+      : `Stopped video copies for ${s.name}.`, 5000);
+  } catch (err) {
+    setStatus(`Couldn't change that: ${err.message}`);
+  }
+  loadSubscriptions();
 }
 $("copy-singles-feed").addEventListener("click", () => copyFeed("/feeds/singles.xml"));
 

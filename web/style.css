@@ -505,6 +505,7 @@ main { margin-top: 18px; }
 .action .ic { width: 16px; height: 16px; }
 .action.subtle { color: var(--muted); }
 .action.confirm { color: var(--fg); font-weight: 600; }
+.action.on { color: var(--fg); }
 .action:disabled { opacity: 0.5; cursor: default; }
 .action:active:not(:disabled) { opacity: 0.6; }
 .sub-none { color: var(--muted); padding: 16px 0; margin: 0; }

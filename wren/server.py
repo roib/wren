@@ -102,6 +102,7 @@ class ShowUpdate(BaseModel):
     min_duration: int | None = None
     title_filter: str | None = None
     enabled: bool | None = None
+    video_copy: bool | None = None
 
 
 @app.get("/api/shows")
@@ -110,6 +111,7 @@ def list_shows():
     slugs = podcast.feed_slugs(shows)
     for s in shows:
         s["feed_path"] = f"/feeds/{slugs[s['id']]}.xml"
+        s["video_feed_path"] = f"/feeds/{slugs[s['id']]}-video.xml" if s["mode"] == "audio" else None
     return shows
 
 
@@ -127,12 +129,16 @@ def subscribe(req: SubscribeRequest):
 
 @app.patch("/api/shows/{show_id}")
 def update_show(show_id: int, req: ShowUpdate):
+    fields = req.model_dump(exclude_unset=True)
     try:
-        return subscriptions.update_show(show_id, **req.model_dump(exclude_unset=True))
+        show = subscriptions.update_show(show_id, **fields)
     except KeyError:
         raise HTTPException(404, "no such show")
     except ValueError as e:
         raise HTTPException(400, str(e))
+    if fields.get("video_copy"):
+        background.download_now(show_id)  # start on the existing episodes right away
+    return show
 
 
 @app.delete("/api/shows/{show_id}", status_code=204)
@@ -215,11 +221,14 @@ def _feed_response(xml: str) -> Response:
     return Response(xml, media_type="application/rss+xml; charset=utf-8")
 
 
-def _show_feed(show: dict, request: Request) -> Response:
-    eps = [ep for ep in db.list_episodes() if ep["show_id"] == show["id"]]
+def _show_feed(show: dict, request: Request, video: bool = False) -> Response:
+    """The show's episodes in its own format, or (video=True) its video copies."""
+    mode = "video" if video else show["mode"]
+    eps = [ep for ep in db.list_episodes() if ep["show_id"] == show["id"] and ep["mode"] == mode]
+    title = f"{show['name']} (video)" if video and show["mode"] == "audio" else show["name"]
     base = _base_url(request)
     return _feed_response(podcast.render(
-        show["name"], f"{show['name']}, downloaded by Wren.", eps, base, f"{base}{request.url.path}",
+        title, f"{show['name']}, downloaded by Wren.", eps, base, f"{base}{request.url.path}",
         art=artwork.feed_ref(artwork.path_for(show["id"]))))
 
 
@@ -249,9 +258,14 @@ def show_feed(name: str, request: Request):
     shows = subscriptions.list_shows()
     slugs = podcast.feed_slugs(shows)
     show = next((s for s in shows if slugs[s["id"]] == name), None)
-    if not show:
-        raise HTTPException(404, "No such show")
-    return _show_feed(show, request)
+    if show:
+        return _show_feed(show, request)
+    # "<show>-video": the show's video copies.
+    if name.endswith("-video"):
+        show = next((s for s in shows if slugs[s["id"]] == name[:-6]), None)
+        if show:
+            return _show_feed(show, request, video=True)
+    raise HTTPException(404, "No such show")
 
 
 # StaticFiles serves files via FileResponse, which handles HTTP Range requests

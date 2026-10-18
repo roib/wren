@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS shows (
     min_duration INTEGER NOT NULL DEFAULT 300,  -- seconds; filters out Shorts
     title_filter TEXT,                          -- optional regex episodes must match
     enabled      INTEGER NOT NULL DEFAULT 1,
+    video_copy   INTEGER NOT NULL DEFAULT 0,    -- audio show: also download each episode as video
     last_checked INTEGER,
     last_error   TEXT,
     created_at   INTEGER NOT NULL
@@ -82,6 +83,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE episodes ADD COLUMN show_id INTEGER")
     if "subtitles" not in cols:
         conn.execute("ALTER TABLE episodes ADD COLUMN subtitles TEXT")
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(shows)")}
+    if "video_copy" not in cols:
+        conn.execute("ALTER TABLE shows ADD COLUMN video_copy INTEGER NOT NULL DEFAULT 0")
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(feed_items)")}
     if "next_try" not in cols:
         conn.execute("ALTER TABLE feed_items ADD COLUMN next_try INTEGER NOT NULL DEFAULT 0")

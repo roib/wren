@@ -39,7 +39,9 @@ def list_shows() -> list[dict]:
     with db.connect() as conn:
         rows = conn.execute("""
             SELECT s.*,
-                   (SELECT COUNT(*) FROM episodes e WHERE e.show_id = s.id) AS episodes,
+                   (SELECT COUNT(*) FROM episodes e WHERE e.show_id = s.id AND e.mode = s.mode) AS episodes,
+                   (SELECT COUNT(*) FROM episodes e WHERE e.show_id = s.id AND e.mode = 'video'
+                      AND s.mode = 'audio') AS video_copies,
                    (SELECT COUNT(*) FROM feed_items f WHERE f.show_id = s.id AND f.status = 'queued') AS queued,
                    (SELECT COUNT(*) FROM feed_items f WHERE f.show_id = s.id AND f.status = 'failed') AS failed
             FROM shows s ORDER BY s.name COLLATE NOCASE
@@ -94,7 +96,7 @@ def subscribe(url: str, mode: str = "audio", keep_last: int = 10, backfill: int 
     return show
 
 
-EDITABLE = {"name", "mode", "keep_last", "min_duration", "title_filter", "enabled"}
+EDITABLE = {"name", "mode", "keep_last", "min_duration", "title_filter", "enabled", "video_copy"}
 
 
 def update_show(show_id: int, **fields) -> dict:
@@ -105,8 +107,9 @@ def update_show(show_id: int, **fields) -> dict:
     if "mode" in fields and fields["mode"] not in ("audio", "video"):
         raise ValueError("mode must be 'audio' or 'video'")
     _check_regex(fields.get("title_filter"))
-    if "enabled" in fields:
-        fields["enabled"] = int(bool(fields["enabled"]))
+    for flag in ("enabled", "video_copy"):
+        if flag in fields:
+            fields[flag] = int(bool(fields[flag]))
     if fields:
         cols = ", ".join(f"{k} = ?" for k in fields)
         with db.connect() as conn:
@@ -313,6 +316,57 @@ def download_next(show_ids: list[int] | None = None) -> bool:
     return True
 
 
+# ---- video copies -----------------------------------------------------------------
+# Audio shows with video_copy on also get each downloaded episode as video (for
+# the show's video podcast feed). Works through what's already downloaded, so
+# turning it on fills in existing episodes too.
+
+COPY_RETRY_SECONDS = 60 * 60
+_copy_failures: dict[str, tuple[int, int]] = {}  # video_id -> (attempts, next_try); reset on restart
+
+
+def _missing_copy(show_ids: list[int] | None) -> tuple[dict, dict] | None:
+    only, params = "", []
+    if show_ids is not None:
+        only = f" AND s.id IN ({','.join('?' * len(show_ids))})" if show_ids else " AND 0"
+        params = list(show_ids)
+    with db.connect() as conn:
+        rows = conn.execute(
+            f"""SELECT e.video_id, e.title, e.source_url, s.id AS sid FROM episodes e
+                JOIN shows s ON s.id = e.show_id
+                WHERE e.mode = 'audio' AND s.mode = 'audio' AND s.video_copy = 1 AND s.enabled = 1{only}
+                  AND NOT EXISTS (SELECT 1 FROM episodes v WHERE v.video_id = e.video_id AND v.mode = 'video')
+                ORDER BY e.upload_date DESC, e.added_at DESC""", params).fetchall()
+        now = _now()
+        for r in rows:
+            attempts, next_try = _copy_failures.get(r["video_id"], (0, 0))
+            if attempts < MAX_ATTEMPTS and next_try <= now:
+                show = dict(conn.execute("SELECT * FROM shows WHERE id = ?", (r["sid"],)).fetchone())
+                return show, dict(r)
+    return None
+
+
+def download_next_copy(show_ids: list[int] | None = None) -> bool:
+    """Download one missing video copy. Returns False when there was nothing to do."""
+    found = _missing_copy(show_ids)
+    if not found:
+        return False
+    show, ep = found
+    log.info("%s: downloading video copy of %s", show["name"], ep["title"])
+    try:
+        downloader.download(ep["source_url"], "video", show_id=show["id"])
+    except downloader.RateLimited:
+        raise
+    except Exception as e:
+        attempts = _copy_failures.get(ep["video_id"], (0, 0))[0] + 1
+        _copy_failures[ep["video_id"]] = (attempts, _now() + COPY_RETRY_SECONDS * attempts)
+        log.warning("%s: video copy failed (%d/%d): %s", show["name"], attempts, MAX_ATTEMPTS, e)
+        return True
+    _copy_failures.pop(ep["video_id"], None)
+    _apply_retention(show)
+    return True
+
+
 def list_pending() -> list[dict]:
     """Queued episodes of enabled shows, oldest first, with what's happening to each:
     downloading, queued, retrying (failed, waiting to try again) or premiere."""
@@ -340,14 +394,17 @@ def list_pending() -> list[dict]:
 # ---- retention ------------------------------------------------------------------
 
 def _apply_retention(show: dict) -> int:
-    """Delete the show's oldest episodes beyond keep_last. Returns how many were removed."""
+    """Delete the show's oldest episodes beyond keep_last (counted separately for
+    audio and video copies). Returns how many were removed."""
     if show["keep_last"] <= 0:
         return 0
     with db.connect() as conn:
-        rows = conn.execute(
-            """SELECT video_id, mode, file, thumb, subtitles FROM episodes WHERE show_id = ?
-               ORDER BY upload_date DESC, added_at DESC""", (show["id"],)).fetchall()
-        old = rows[show["keep_last"]:]
+        old = []
+        for mode in ("audio", "video"):
+            rows = conn.execute(
+                """SELECT video_id, mode, file, thumb, subtitles FROM episodes WHERE show_id = ? AND mode = ?
+                   ORDER BY upload_date DESC, added_at DESC""", (show["id"], mode)).fetchall()
+            old += rows[show["keep_last"]:]
         for ep in old:
             conn.execute("DELETE FROM episodes WHERE video_id = ? AND mode = ?",
                          (ep["video_id"], ep["mode"]))
