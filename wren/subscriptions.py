@@ -191,12 +191,12 @@ def _check_feed(show: dict) -> int:
                      (_now(), show["id"]))
     if queued:
         log.info("%s: %d new episode(s)", show["name"], queued)
-    _ensure_art(show)
+    ensure_art(show)
     return queued
 
 
-def _ensure_art(show: dict) -> None:
-    """Make the show's podcast-feed artwork the first time its feed is checked."""
+def ensure_art(show: dict) -> None:
+    """Make the show's podcast-feed artwork if it doesn't have any yet."""
     if artwork.path_for(show["id"]).exists():
         return
     with db.connect() as conn:

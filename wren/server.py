@@ -1,5 +1,6 @@
 import logging
 import mimetypes
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -169,6 +170,9 @@ def subscribe(req: SubscribeRequest):
     except Exception as e:  # network / yt-dlp trouble while looking up the show
         raise HTTPException(502, f"couldn't load that show: {e}")
     background.nudge()
+    # Make its artwork now, not at the next feed check (which can be hours away);
+    # in the background, as fetching the channel picture takes a moment.
+    threading.Thread(target=subscriptions.ensure_art, args=(show,), daemon=True).start()
     return show
 
 
