@@ -12,6 +12,13 @@ Apple Podcasts or any other podcast app.
 Wren comes with a small web app for managing it, built to feel at home as an
 iPhone home-screen app.
 
+<p align="center">
+  <img src="docs/screenshots/shows.png" alt="Shows: every subscription with its artwork, format badges and status" width="260">
+  <img src="docs/screenshots/show.png" alt="A show: open its feed in Apple Podcasts, copy it, and see its episodes" width="260">
+  <img src="docs/screenshots/alerts.png" alt="Alerts: problems that need attention, and recently resolved ones" width="260">
+</p>
+<p align="center"><sub>Shows · a show's page · Alerts (sample data, made-up shows)</sub></p>
+
 ## Why
 
 Mostly: **no injected ads.** The audio a podcast's own feed serves is often
@@ -70,15 +77,42 @@ It also helps with:
 ### On an iPhone
 
 - **Install it.** Open Wren in Safari and choose Share → Add to Home Screen.
-- **Listen in a podcast app.** On a show's page, tap *Open in Podcasts*, or
-  use *Copy feed* and then Library → ⋯ → *Follow a Show by URL* in Apple
-  Podcasts. Apple Podcasts fetches the feed from the phone itself, so a
-  server that's only reachable on your home network works.
+- **Listen in a podcast app.** See
+  [Adding a show to Apple Podcasts](#adding-a-show-to-apple-podcasts).
 - **Share to Wren.** A Shortcut can put Wren in the share sheet of Safari and
   the YouTube app; the Add page has step-by-step instructions. It opens
   `/#/add?url=<link>` with the link already looked up.
 - **Get notifications.** Turn them on from the Alerts page. Push only works
   in the home-screen app, not in a Safari tab.
+
+## Adding a show to Apple Podcasts
+
+Every show in Wren is a podcast feed you can follow in Apple Podcasts (or any
+app that lets you add a show by URL).
+
+1. In Wren, open the show and tap **Open in Podcasts**. Apple Podcasts opens
+   with the show's feed filled in; tap **Follow**.
+2. If that doesn't open it, tap **Copy feed** instead. Then, in Apple
+   Podcasts, go to **Library**, tap **⋯** in the top corner, choose
+   **Follow a Show by URL**, paste and tap **Follow**.
+3. For a show that also downloads video, do the same with **Open video feed**.
+   It appears as a separate show, "<name> (video)".
+4. Single episodes you added by hand have a feed of their own: open
+   **Single episodes** on the Shows page and add it the same way.
+
+Tips:
+
+- **Turn on automatic downloads** for these shows in Apple Podcasts (on the
+  show, ⋯ → Settings). If Wren is only reachable on your home network, the
+  app can only fetch new episodes there, but downloaded episodes play
+  anywhere.
+- **New episodes show up when Apple Podcasts refreshes.** Pull down on the
+  show to check right away.
+- **A show with nothing downloaded yet** carries a short "Waiting for new
+  episodes" placeholder, because Apple Podcasts won't follow an empty feed.
+  It disappears when the first real episode arrives.
+- **Artwork changes can take a while** to show up, as Apple Podcasts caches
+  it.
 
 ## Running it
 
