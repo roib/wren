@@ -1,4 +1,19 @@
 import argparse
+import logging
+import time
+
+
+def _ago(ts: int | None) -> str:
+    if not ts:
+        return "never"
+    mins = int((time.time() - ts) // 60)
+    if mins < 1:
+        return "just now"
+    if mins < 60:
+        return f"{mins}m ago"
+    if mins < 60 * 24:
+        return f"{mins // 60}h ago"
+    return f"{mins // (60 * 24)}d ago"
 
 
 def main() -> None:
@@ -15,7 +30,29 @@ def main() -> None:
 
     sub.add_parser("list", help="list downloaded episodes")
 
+    p_subscribe = sub.add_parser("subscribe", help="follow a YouTube channel or playlist")
+    p_subscribe.add_argument("url")
+    p_subscribe.add_argument("--mode", choices=["audio", "video"], default="audio")
+    p_subscribe.add_argument("--keep", type=int, default=10,
+                             help="episodes to keep (0 keeps everything; default 10)")
+    p_subscribe.add_argument("--backfill", type=int, default=3,
+                             help="how many existing episodes to download now (default 3)")
+    p_subscribe.add_argument("--min-duration", type=int, default=300,
+                             help="skip episodes shorter than this many seconds (default 300)")
+    p_subscribe.add_argument("--title-filter", help="only download episodes whose title matches this regex")
+    p_subscribe.add_argument("--no-sync", action="store_true",
+                             help="just subscribe; download on the next sync")
+
+    sub.add_parser("shows", help="list subscriptions")
+
+    p_unsub = sub.add_parser("unsubscribe", help="stop following a show (keeps its episodes)")
+    p_unsub.add_argument("show_id", type=int)
+
+    p_sync = sub.add_parser("sync", help="check subscriptions and download new episodes")
+    p_sync.add_argument("show_id", type=int, nargs="?")
+
     args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     if args.cmd == "add":
         from .downloader import download
@@ -31,6 +68,50 @@ def main() -> None:
 
         for ep in list_episodes():
             print(f"[{ep['mode']:5}] {ep['title']}  ({ep['file']})")
+    elif args.cmd == "subscribe":
+        from . import subscriptions
+
+        try:
+            show = subscriptions.subscribe(
+                args.url, args.mode, keep_last=args.keep, backfill=args.backfill,
+                min_duration=args.min_duration, title_filter=args.title_filter)
+        except ValueError as e:
+            parser.exit(1, f"wren: {e}\n")
+        print(f"Subscribed: [{show['id']}] {show['name']}")
+        if not args.no_sync:
+            totals = subscriptions.sync(show["id"])
+            print(f"Downloaded {totals['downloaded']} episode(s)")
+    elif args.cmd == "shows":
+        from . import subscriptions
+
+        shows = subscriptions.list_shows()
+        if not shows:
+            print("No subscriptions. Add one with: wren subscribe <channel or playlist URL>")
+        for s in shows:
+            keep = "all" if s["keep_last"] <= 0 else s["keep_last"]
+            status = [f"{s['episodes']} episodes", f"keep {keep}", s["mode"],
+                      f"checked {_ago(s['last_checked'])}"]
+            if s["queued"]:
+                status.append(f"{s['queued']} queued")
+            if s["failed"]:
+                status.append(f"{s['failed']} failed")
+            print(f"[{s['id']}] {s['name']}  ({', '.join(status)})")
+            if s["last_error"]:
+                print(f"    error: {s['last_error']}")
+    elif args.cmd == "unsubscribe":
+        from . import subscriptions
+
+        show = subscriptions.get_show(args.show_id)
+        if not show:
+            parser.exit(1, f"wren: no show with id {args.show_id}\n")
+        subscriptions.unsubscribe(args.show_id)
+        print(f"Unsubscribed from {show['name']} (its episodes stay in the library)")
+    elif args.cmd == "sync":
+        from . import subscriptions
+
+        totals = subscriptions.sync(args.show_id)
+        print(f"Checked {totals['shows']} show(s): {totals['new']} new, "
+              f"{totals['downloaded']} downloaded, {totals['removed']} removed")
 
 
 if __name__ == "__main__":

@@ -17,9 +17,54 @@ CREATE TABLE IF NOT EXISTS episodes (
     file        TEXT NOT NULL,   -- path relative to MEDIA_DIR
     thumb       TEXT,            -- path relative to MEDIA_DIR
     added_at    INTEGER NOT NULL,
+    show_id     INTEGER,         -- subscription it came from; NULL for manual adds
     PRIMARY KEY (video_id, mode)
 );
+
+CREATE TABLE IF NOT EXISTS shows (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    name         TEXT NOT NULL,
+    kind         TEXT NOT NULL CHECK (kind IN ('youtube', 'rss')),
+    source_url   TEXT NOT NULL,
+    feed_url     TEXT NOT NULL UNIQUE,
+    mode         TEXT NOT NULL DEFAULT 'audio' CHECK (mode IN ('audio', 'video')),
+    keep_last    INTEGER NOT NULL DEFAULT 10,   -- 0 keeps everything
+    min_duration INTEGER NOT NULL DEFAULT 300,  -- seconds; filters out Shorts
+    title_filter TEXT,                          -- optional regex episodes must match
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    last_checked INTEGER,
+    last_error   TEXT,
+    created_at   INTEGER NOT NULL
+);
+
+-- Every item ever seen in a show's feed, so nothing is downloaded twice and
+-- skipped or cleaned-up episodes are never fetched again.
+CREATE TABLE IF NOT EXISTS feed_items (
+    show_id    INTEGER NOT NULL REFERENCES shows(id) ON DELETE CASCADE,
+    item_id    TEXT NOT NULL,   -- YouTube video id (or RSS guid)
+    url        TEXT NOT NULL,
+    title      TEXT,
+    published  TEXT,            -- ISO 8601 timestamp from the feed
+    status     TEXT NOT NULL CHECK (status IN ('queued', 'downloaded', 'skipped', 'failed')),
+    attempts   INTEGER NOT NULL DEFAULT 0,
+    error      TEXT,
+    first_seen INTEGER NOT NULL,
+    PRIMARY KEY (show_id, item_id)
+);
 """
+
+_migrated = False
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Bring databases created by older versions up to the current schema."""
+    global _migrated
+    if _migrated:
+        return
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(episodes)")}
+    if "show_id" not in cols:
+        conn.execute("ALTER TABLE episodes ADD COLUMN show_id INTEGER")
+    _migrated = True
 
 
 @contextmanager
@@ -28,7 +73,9 @@ def connect():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     try:
+        conn.execute("PRAGMA foreign_keys = ON")
         conn.executescript(SCHEMA)
+        _migrate(conn)
         yield conn
         conn.commit()
     finally:

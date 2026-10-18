@@ -10,3 +10,7 @@ WEB_DIR = Path(os.environ.get("WREN_WEB", ROOT / "web"))
 MAX_HEIGHT = int(os.environ.get("WREN_MAX_HEIGHT", "720"))
 # 0 keeps YouTube's original audio stream; set e.g. 64 to re-encode smaller files.
 AUDIO_BITRATE_KBPS = int(os.environ.get("WREN_AUDIO_KBPS", "0"))
+
+# Subscriptions
+DOWNLOAD_PAUSE_SECONDS = int(os.environ.get("WREN_DOWNLOAD_PAUSE", "5"))
+MAX_ATTEMPTS = 5  # failed downloads are retried on later syncs up to this many times

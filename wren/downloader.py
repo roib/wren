@@ -84,18 +84,43 @@ def _reencode_audio(path: Path, kbps: int) -> None:
     tmp.replace(path)
 
 
+class Skipped(Exception):
+    """The video exists but shouldn't be downloaded (live, too short, ...)."""
+
+
+def _skip_reason(info: dict, min_duration: int) -> str | None:
+    live = info.get("live_status")
+    if live in ("is_live", "is_upcoming"):
+        return "upcoming" if live == "is_upcoming" else "live"
+    duration = info.get("duration")
+    if min_duration and duration is not None and duration < min_duration:
+        return f"too short ({int(duration)}s)"
+    return None
+
+
 def _thumb_file(video_id: str) -> Path | None:
     p = MEDIA_DIR / f"{video_id}.jpg"
     return p if p.exists() else None
 
 
-def download(url: str, mode: str = "audio") -> dict:
+def download(url: str, mode: str = "audio", show_id: int | None = None,
+             min_duration: int = 0) -> dict:
+    """Download one video and add it to the library.
+
+    Raises Skipped (before downloading anything) if it's live, upcoming, or
+    shorter than `min_duration` seconds.
+    """
     if mode not in ("audio", "video"):
         raise ValueError("mode must be 'audio' or 'video'")
     MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 
     with yt_dlp.YoutubeDL(_ydl_opts(mode)) as ydl:
-        info = ydl.extract_info(url, download=True)
+        # Look first, so skipped videos cost one metadata request and no download.
+        info = ydl.extract_info(url, download=False)
+        reason = _skip_reason(info, min_duration)
+        if reason:
+            raise Skipped(reason)
+        info = ydl.process_ie_result(info, download=True)
 
     media = _media_file(info)
     if mode == "audio" and AUDIO_BITRATE_KBPS > 0:
@@ -112,6 +137,7 @@ def download(url: str, mode: str = "audio") -> dict:
         "source_url": info.get("webpage_url") or url,
         "file": media.relative_to(MEDIA_DIR).as_posix(),
         "thumb": thumb.relative_to(MEDIA_DIR).as_posix() if thumb else None,
+        "show_id": show_id,
     }
     db.upsert_episode(episode)
     return episode
