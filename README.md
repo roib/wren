@@ -195,3 +195,7 @@ How it's put together:
   episodes.
 - **Alerts:** `wren/push.py` keeps the alert log and sends Web Push
   (VAPID via `pywebpush`).
+
+## License
+
+[MIT](LICENSE). Wren downloads from YouTube with yt-dlp; what you download, and how you use it, is up to you.
