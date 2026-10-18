@@ -562,9 +562,19 @@ function subscriptionRow(s) {
     h("button", {
       class: "sub-head",
       "aria-expanded": String(open),
-      onclick: () => {
-        expanded = open ? null : s.id;
-        renderSubscriptions();
+      // Toggle classes in place (no re-render) so the row animates open/closed.
+      onclick: (e) => {
+        const row = e.currentTarget.closest(".sub-row");
+        const wasOpen = row.classList.contains("open");
+        for (const r of $("sub-list").querySelectorAll(".sub-row.open")) {
+          r.classList.remove("open");
+          r.querySelector(".sub-head").setAttribute("aria-expanded", "false");
+        }
+        if (!wasOpen) {
+          row.classList.add("open");
+          e.currentTarget.setAttribute("aria-expanded", "true");
+        }
+        expanded = wasOpen ? null : s.id;
       },
     },
       art
@@ -575,20 +585,23 @@ function subscriptionRow(s) {
         h("span", { class: "sub-meta" }, status),
         warn ? h("span", { class: "sub-warn" }, warn) : null),
       h("span", { class: "chev" }, icon("chevronDown"))),
-    open
-      ? h("div", { class: "sub-body" },
+    // Always rendered; collapsed with CSS until the row is open.
+    h("div", { class: "sub-collapse" },
+      h("div", { class: "sub-body" },
+        h("div", { class: "sub-body-inner" },
           h("p", { class: "sub-detail" }, detail),
           h("div", { class: "sub-buttons" },
             h("button", {
-              class: "pill strong",
+              class: "action",
               disabled: busy,
+              tabindex: open ? null : "-1",
               onclick: () => downloadShowNow(s),
-            }, busy ? "Downloading…" : "Check & download now"),
+            }, icon("download"), busy ? "Downloading…" : "Download now"),
             h("button", {
-              class: `pill${isConfirming ? " confirm" : ""}`,
+              class: `action subtle${isConfirming ? " confirm" : ""}`,
+              tabindex: open ? null : "-1",
               onclick: () => removeShow(s),
-            }, isConfirming ? "Tap again to remove" : "Remove")))
-      : null);
+            }, isConfirming ? "Tap again to remove" : "Remove"))))));
 }
 
 // Check one show and download its queue now, even outside the server's active hours.
@@ -1051,6 +1064,46 @@ async function pollJob(jobId) {
 }
 
 // ---- boot -----------------------------------------------------------------
+
+// ---- fast taps ------------------------------------------------------------
+// iOS Safari swallows or delays taps for a moment after a list stops scrolling;
+// native apps don't. Recognise taps ourselves and activate on touchend. A touch
+// that lands while the list is still moving only stops it, as in native apps.
+const TAPPABLE = 'button, a[href], [role="menuitemradio"], #sleep-backdrop';
+let lastScrollAt = 0;
+let tapStart = null;
+
+$("scroller").addEventListener("scroll", () => { lastScrollAt = performance.now(); }, { passive: true });
+
+document.addEventListener("touchstart", (e) => {
+  if (e.touches.length !== 1) { tapStart = null; return; }
+  const t = e.touches[0];
+  tapStart = {
+    x: t.clientX,
+    y: t.clientY,
+    at: performance.now(),
+    target: e.target,
+    stoppingScroll: performance.now() - lastScrollAt < 80,
+  };
+}, { passive: true }); // a touchstart listener also makes iOS show :active styles
+
+document.addEventListener("touchmove", (e) => {
+  if (!tapStart) return;
+  const t = e.touches[0];
+  if (Math.hypot(t.clientX - tapStart.x, t.clientY - tapStart.y) > 10) tapStart = null;
+}, { passive: true });
+
+document.addEventListener("touchend", (e) => {
+  const tap = tapStart;
+  tapStart = null;
+  if (!tap || tap.stoppingScroll || performance.now() - tap.at > 500) return;
+  // Leave form controls (sliders, text fields, the Audio/Video toggle) and video to iOS.
+  if (tap.target.closest("input, select, textarea, label, video")) return;
+  const el = tap.target.closest(TAPPABLE);
+  if (!el || el.disabled) return;
+  e.preventDefault(); // skip Safari's own (delayed) click so it doesn't fire twice
+  el.click();
+}, { passive: false });
 
 // iOS can ignore user-scalable=no; cancel its pinch gestures directly.
 for (const type of ["gesturestart", "gesturechange", "gestureend"]) {

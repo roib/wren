@@ -51,6 +51,11 @@ body {
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior: none;
   -webkit-text-size-adjust: 100%;
+  /* Like a native app: long-pressing doesn't select text or pop up the
+     copy / look up / save image menu. Text fields still allow it (below). */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
   /* App layout: a fixed nav bar on top and one scrolling content area below it,
      ending above the mini player, so the scroll indicator stays in that area
      instead of running the full height of the screen. */
@@ -59,6 +64,24 @@ body {
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
+}
+
+/* Pressed feedback the moment a row is touched (after a tiny delay, so starting
+   a scroll doesn't flash every row the finger lands on). */
+.show, .ep-main, .sub-head {
+  border-radius: 10px;
+  transition: background-color 0.2s;
+}
+.show:active, .ep-main:active, .sub-head:active {
+  background-color: var(--line);
+  transition: background-color 0s 0.05s;
+}
+.icon-btn:active, .pill:active, .chip:active, .row-btn:active { opacity: 0.6; }
+
+input, textarea {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
 }
 
 #scroller {
@@ -72,8 +95,14 @@ body.has-player #scroller {
   margin-bottom: calc(env(safe-area-inset-bottom) + 80px);
   padding-bottom: 16px;
 }
-#scroller > header,
-#scroller > main { max-width: 640px; margin-left: auto; margin-right: auto; }
+/* Always at least a pixel taller than the scroll area, so even a short list
+   rubber-bands when pulled, like a native iOS list. Only this area moves; the
+   nav bar stays put. */
+.scroll-inner {
+  min-height: calc(100% + 1px);
+  max-width: 640px;
+  margin: 0 auto;
+}
 
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 a { color: inherit; }
@@ -428,9 +457,41 @@ main { margin-top: 18px; }
 .sub-warn::before { content: "⚠︎ "; }
 .sub-head .chev { color: var(--faint); transition: transform 0.2s; }
 .sub-row.open .chev { transform: rotate(180deg); }
-.sub-body { padding: 0 0 14px 56px; }
+/* Row details grow open smoothly: the grid row animates from 0fr to 1fr. */
+.sub-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.sub-row.open .sub-collapse { grid-template-rows: 1fr; }
+.sub-body {
+  min-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.sub-row.open .sub-body { opacity: 1; transition: opacity 0.25s 0.05s; }
+.sub-body-inner { padding: 0 0 14px 56px; }
 .sub-detail { margin: 0 0 10px; color: var(--muted); font-size: 13px; line-height: 1.4; }
 .sub-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* Compact, quiet row actions (instead of big white buttons). */
+.action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 14px;
+  font-weight: 500;
+}
+.action .ic { width: 16px; height: 16px; }
+.action.subtle { color: var(--muted); }
+.action.confirm { color: var(--fg); font-weight: 600; }
+.action:disabled { opacity: 0.5; cursor: default; }
+.action:active:not(:disabled) { opacity: 0.6; }
 .sub-none { color: var(--muted); padding: 16px 0; margin: 0; }
 
 .primary:disabled { opacity: 0.5; cursor: default; }
