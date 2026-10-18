@@ -11,6 +11,7 @@ const ICONS = {
   download: '<path d="M12 4.5v10.5M7.5 10.5 12 15l4.5-4.5M5.5 19.5h13"/>',
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  bookmark: '<path d="M7 4.5h10v15l-5-3.5-5 3.5z"/>',
   bell: '<path d="M6.5 16.5V11a5.5 5.5 0 0 1 11 0v5.5l1.5 2h-14z"/><path d="M10 20.5a2.2 2.2 0 0 0 4 0"/>',
   pulse: '<path d="M3 12h4l2.5-6 5 12 2.5-6h4"/>',
   podcast: '<circle cx="12" cy="10.5" r="2.2"/><path d="M12 12.7V20"/><path d="M8.3 14.6a5.2 5.2 0 1 1 7.4 0"/><path d="M5.7 17.3a8.8 8.8 0 1 1 12.6 0"/>',
@@ -156,6 +157,13 @@ function showBadges(s) {
     s.enabled ? null : h("span", { class: "badge muted" }, "Paused"));
 }
 
+// ---- layout ------------------------------------------------------------------
+// Wide windows get a desktop layout: a sidebar, the show list always visible,
+// and the page (a show, Add, Alerts...) beside them. Narrower ones get the
+// phone layout. Same pages, same code; the CSS switches at the same width.
+const desktopMQ = matchMedia("(min-width: 1024px)");
+const isDesktop = () => desktopMQ.matches;
+
 // ---- state & routing --------------------------------------------------------
 
 let overview = null; // /api/overview
@@ -182,16 +190,18 @@ function routeDepth(hash) {
 async function load() {
   const r = route();
   try {
-    if (r.name === "show") details.set(r.id, await api(`/api/shows/${r.id}/detail`));
-    else if (r.name === "singles") details.set("singles", await api("/api/singles"));
+    const jobs = [];
+    if (r.name === "show") jobs.push(api(`/api/shows/${r.id}/detail`).then((d) => details.set(r.id, d)));
+    else if (r.name === "singles") jobs.push(api("/api/singles").then((d) => details.set("singles", d)));
     else if (r.name === "alerts") {
-      alertList = await api("/api/alerts");
-      showBadge(alertList.active.length);
-      if (!pushState) await loadPushState();
-    } else if (r.name !== "add") {
-      overview = await api("/api/overview");
-      showBadge(overview.alerts);
+      jobs.push(api("/api/alerts").then(async (a) => { alertList = a; if (!pushState) await loadPushState(); }));
     }
+    // Home and Status show the overview; on desktop the sidebar and show list always do.
+    if (r.name === "home" || r.name === "status" || isDesktop()) {
+      jobs.push(api("/api/overview").then((o) => { overview = o; }));
+    }
+    await Promise.all(jobs);
+    showBadge(r.name === "alerts" ? alertList.active.length : overview?.alerts ?? 0);
     loadError = null;
   } catch (err) {
     loadError = err.message;
@@ -210,7 +220,7 @@ function schedule() {
   pollTimer = setTimeout(() => {
     if (document.visibilityState === "visible") load();
     else schedule();
-  }, isBusy(data) ? 4000 : 30000);
+  }, isBusy(data) || (isDesktop() && isBusy(overview)) ? 4000 : 30000);
 }
 
 function isBusy(data) {
@@ -225,6 +235,16 @@ function isBusy(data) {
 
 function render() {
   const r = route();
+  // On desktop the show list is always there, so "Shows" opens the first show.
+  if (isDesktop() && r.name === "home" && overview) {
+    const first = overview.shows[0] ? `#/show/${overview.shows[0].id}` : overview.singles.episodes ? "#/singles" : null;
+    if (first) {
+      history.replaceState(null, "", first);
+      onRoute();
+      return;
+    }
+  }
+  if (isDesktop()) renderPanes(r);
   const top = r.name === "home";
   $("back").hidden = top;
   $("nav-actions").hidden = !top;
@@ -281,6 +301,96 @@ function section(title, ...children) {
 function art(url, cls = "art") {
   return url ? h("img", { class: cls, src: url, alt: "", loading: "lazy" }) : h("span", { class: `${cls} blank` });
 }
+
+// ---- desktop panes ---------------------------------------------------------------
+
+let paneKind = "all"; // the show list's quick filter: all, audio, video, attention
+const needsAttention = (s) => !!(s.last_error || s.failed || s.retrying);
+
+function renderPanes(r) {
+  renderSidebar(r);
+  renderListPane(r);
+}
+
+function navLink(href, label, dot, count, active, countClass = "") {
+  return h("a", { class: `side-link${active ? " active" : ""}`, href, "aria-current": active ? "page" : null },
+    h("span", { class: "side-label" }, h("span", { class: "side-dot", style: `background: ${dot}` }), label),
+    count ? h("span", { class: `side-count ${countClass}` }, String(count)) : null);
+}
+
+function renderSidebar(r) {
+  const o = overview;
+  const line = o ? workerLine(o) : null;
+  $("sidebar").replaceChildren(
+    h("div", { class: "brand" }, h("img", { src: "favicon.svg", alt: "", width: "28", height: "28" }), h("span", {}, "Wren")),
+    h("a", { class: "button strong side-add", href: "#/add" }, icon("plus"), "Add show or episode"),
+    h("nav", { class: "side-nav", "aria-label": "Wren" },
+      navLink("#/", "Shows", "var(--fg)", o?.shows.length, r.name === "show" || r.name === "home"),
+      navLink("#/singles", "Single episodes", "var(--faint)", o?.singles.episodes, r.name === "singles"),
+      navLink("#/alerts", "Alerts", "var(--warn)", o?.alerts, r.name === "alerts", "alert-count"),
+      navLink("#/status", "Status", "var(--ok)", null, r.name === "status")),
+    line ? h("a", { class: "side-status", href: "#/status" },
+      h("span", { class: "side-status-main" },
+        h("span", { class: `status-dot${line.busy ? " busy" : ""}${o.worker.paused_until ? " paused" : ""}` }), line.text),
+      h("span", { class: "row-meta" }, line.next),
+      h("span", { class: "row-meta" }, join(`${fmtBytes(o.disk.free)} free`, `yt-dlp ${o.worker.ytdlp}`))) : null);
+}
+
+function paneShows() {
+  const q = filter.trim().toLowerCase();
+  return (overview?.shows || []).filter((s) =>
+    (!q || s.name.toLowerCase().includes(q))
+    && (paneKind === "all"
+      || (paneKind === "audio" && s.mode === "audio")
+      || (paneKind === "video" && (s.mode === "video" || s.video_copy))
+      || (paneKind === "attention" && needsAttention(s))));
+}
+
+function renderListPane(r) {
+  const pane = $("listpane");
+  // Built once, so the filter box keeps its focus and text across refreshes.
+  if (!pane.dataset.built) {
+    pane.dataset.built = "1";
+    pane.append(
+      h("div", { class: "pane-head" }, h("h2", {}, "Shows"), h("p", { id: "pane-sub", class: "row-meta" })),
+      h("input", {
+        id: "pane-filter", class: "filter", type: "search", placeholder: "Filter shows", autocomplete: "off",
+        "aria-label": "Filter shows",
+        oninput: (e) => { filter = e.target.value; renderListPane(route()); },
+      }),
+      h("div", { id: "pane-chips", class: "chips", role: "group", "aria-label": "Show filter" }),
+      h("ul", { id: "pane-list", class: "pane-list" }),
+      h("div", { id: "pane-other" }));
+  }
+  const o = overview;
+  $("pane-sub").textContent = o ? join(plural(o.shows.length, "show"), plural(o.totals.episodes, "episode"), fmtBytes(o.totals.bytes)) : "";
+  const attention = (o?.shows || []).filter(needsAttention).length;
+  $("pane-chips").replaceChildren(...[["all", "All"], ["audio", "Audio"], ["video", "Video"],
+    ["attention", attention ? `Needs attention · ${attention}` : "Needs attention"]].map(([kind, label]) =>
+    h("button", {
+      type: "button", class: `chip${paneKind === kind ? " on" : ""}${kind === "attention" && attention ? " warn" : ""}`,
+      "aria-pressed": String(paneKind === kind),
+      onclick: () => { paneKind = kind; renderListPane(route()); },
+    }, label)));
+  const shows = paneShows();
+  $("pane-list").replaceChildren(...(shows.length
+    ? shows.map((s) => {
+      const li = showRow(s);
+      if (r.name === "show" && r.id === s.id) li.querySelector(".row").classList.add("selected");
+      return li;
+    })
+    : [h("li", { class: "none" }, o ? "No shows match." : "Loading…")]));
+  $("pane-other").replaceChildren(...(o?.singles.episodes ? [
+    h("h3", { class: "pane-section" }, "Other"),
+    h("ul", { class: "pane-list" }, (() => {
+      const li = singlesRow(o.singles);
+      if (r.name === "singles") li.querySelector(".row").classList.add("selected");
+      return li;
+    })()),
+  ] : []));
+}
+
+desktopMQ.addEventListener("change", () => { render(); load(); });
 
 // ---- home -------------------------------------------------------------------
 
@@ -674,6 +784,7 @@ function addView(params) {
       h("button", { type: "submit", class: "primary", disabled: add.busy }, add.busy ? "Looking up…" : "Look up")),
     add.error ? banner(add.error) : null,
     add.result ? resultView(add.result) : null,
+    bookmarklet(),
     shareHelp());
 }
 
@@ -743,7 +854,7 @@ function resultView(r) {
         h("span", { class: "preview-meta" }, i.live ? "Live" : fmtDuration(i.duration) || "")))) : null,
       subscribeBlock(r.url, r.title, r.subscribed)));
   }
-  return h("div", {},
+  return h("div", { class: "results" },
     section("Episode", h("div", { class: "card result" },
       h("div", { class: "result-video" },
         art(r.thumb_url, "result-thumb"),
@@ -787,6 +898,20 @@ async function addEpisode(url, btn) {
     btn.disabled = false;
     toast(`Couldn't add: ${err.message}`, 6000);
   }
+}
+
+// Desktop: a bookmarklet that opens Wren's Add page for the current tab.
+function bookmarklet() {
+  const code = `javascript:(()=>{window.open(${JSON.stringify(`${location.origin}/#/add?url=`)}+encodeURIComponent(location.href),"_blank")})()`;
+  return h("section", { class: "section desktop-only" }, h("div", { class: "bookmarklet card" },
+    h("div", { class: "row-text" },
+      h("span", { class: "row-title" }, "Add from any YouTube tab"),
+      h("span", { class: "row-meta wrap" },
+        "Drag this button to your bookmarks bar. Click it on a YouTube page and Wren opens with the link looked up.")),
+    h("a", {
+      class: "action", href: code, draggable: "true",
+      onclick: (e) => { e.preventDefault(); toast("Drag it to your bookmarks bar"); },
+    }, icon("bookmark"), "Add to Wren")));
 }
 
 let shareOpen = false;
@@ -1021,6 +1146,7 @@ function openSheet() {
   const el = $("sheet");
   if (el.classList.contains("open")) return;
   el.setAttribute("aria-hidden", "false");
+  $("sheet-backdrop").hidden = false;
   // Safari skips the slide-up if the sheet goes from hidden to open in one step:
   // make it renderable (still off-screen) first, then open it a frame later.
   el.style.visibility = "visible";
@@ -1034,10 +1160,15 @@ function openSheet() {
 function closeSheet() {
   $("sheet").classList.remove("open");
   $("sheet").setAttribute("aria-hidden", "true");
+  $("sheet-backdrop").hidden = true;
   $("player-wrap").querySelector("audio, video")?.pause();
   setTimeout(() => { if (!$("sheet").classList.contains("open")) $("player-wrap").replaceChildren(); }, 400);
 }
 $("sheet-close").addEventListener("click", closeSheet);
+$("sheet-backdrop").addEventListener("click", closeSheet);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && $("sheet").classList.contains("open")) closeSheet();
+});
 
 // Swipe down to close the player (but leave the player's own controls alone).
 let drag = null;
@@ -1152,7 +1283,8 @@ function navigate(href) {
   if (href === location.hash) return;
   const from = routeDepth(location.hash);
   const to = routeDepth(href);
-  const dir = to > from ? "forward" : to < from ? "back" : "fade";
+  // Desktop swaps the page beside the list, so a quick fade rather than a slide.
+  const dir = isDesktop() ? "fade" : to > from ? "forward" : to < from ? "back" : "fade";
   scrollMemory.set(location.hash, $("scroller").scrollTop);
   const go = () => {
     history.replaceState(null, "", href);

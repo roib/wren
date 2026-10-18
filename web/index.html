@@ -16,6 +16,10 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <!-- Desktop only (wide windows): the sidebar and the show list, filled in by app.js. -->
+  <aside id="sidebar" aria-label="Navigation"></aside>
+  <section id="listpane" aria-label="Shows"></section>
+
   <nav class="nav" id="nav">
     <a id="back" href="#/" hidden><span data-icon="chevronLeft"></span>Shows</a>
     <span class="nav-title" id="nav-title" aria-hidden="true"></span>
@@ -37,7 +41,9 @@
 
   <div id="toast" role="status" aria-live="polite"></div>
 
-  <!-- Test player: the phone's own controls, in a sheet that swipes down to close. -->
+  <!-- Test player: the phone's own controls, in a sheet that swipes down to close
+       (on desktop, a window over a dimmed backdrop). -->
+  <div id="sheet-backdrop" hidden></div>
   <section id="sheet" aria-label="Test playback" aria-hidden="true">
     <div class="sheet-inner">
       <button id="sheet-close" class="icon-btn" aria-label="Close player" data-icon="chevronDown"></button>
