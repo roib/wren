@@ -13,6 +13,7 @@ let pending = []; // episodes on their way from subscriptions (from /api/pending
 let pendingWorker = null; // the server worker's status, to say when they'll arrive
 let downloaded = new Set(); // media_url paths stored in MEDIA_CACHE
 const downloading = new Map(); // episode key -> progress 0..1
+const confirmingRemoval = new Set(); // episode keys showing "Remove?" after a first tap
 let current = null;
 
 // ---- icons ----------------------------------------------------------------
@@ -371,9 +372,23 @@ function downloadButton(ep) {
       ring(downloading.get(k)));
   }
   if (downloaded.has(ep.media_url)) {
+    // Two taps to remove the copy on this device: the first asks "Remove?".
+    if (confirmingRemoval.has(k)) {
+      return h("button", {
+        class: "remove-confirm", "aria-label": "Tap again to remove the download from this device",
+        onclick: () => {
+          confirmingRemoval.delete(k);
+          removeDownload(ep);
+        },
+      }, "Remove?");
+    }
     return h("button", {
-      class: "icon-btn sm dl on", "aria-label": "Remove download",
-      onclick: () => removeDownload(ep),
+      class: "icon-btn sm dl on", "aria-label": "Downloaded. Tap to remove from this device",
+      onclick: () => {
+        confirmingRemoval.add(k);
+        render();
+        setTimeout(() => { if (confirmingRemoval.delete(k)) render(); }, 3000);
+      },
     }, icon("downloaded"));
   }
   return h("button", {

@@ -272,6 +272,17 @@ main { margin-top: 18px; }
 
 .ep-actions { display: flex; flex-shrink: 0; margin-right: -8px; }
 .check.on { color: var(--ok); }
+.remove-confirm {
+  height: 30px;
+  padding: 0 10px;
+  margin: 3px 0;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
 .dl.on { color: var(--fg); }
 .dl.busy { color: var(--fg); }
 .now { color: var(--fg); }
