@@ -3,7 +3,7 @@
 // - /api/library: network first, cache fallback (episode list works offline)
 // - /media/*: served from the media cache when downloaded, with Range support
 //   (Safari requires 206 responses to play/seek audio and video)
-const SHELL = "wren-shell-v2";
+const SHELL = "wren-shell-v3";
 const DATA = "wren-data-v1";
 const MEDIA = "wren-media-v1"; // must match app.js
 const SHELL_FILES = [
@@ -46,7 +46,8 @@ self.addEventListener("fetch", (e) => {
 
 async function networkFirst(request, cacheName) {
   try {
-    const res = await fetch(request);
+    // Always check with the server, so an update never mixes old and new files.
+    const res = await fetch(request, { cache: "no-cache" });
     if (res.ok) {
       const copy = res.clone();
       caches.open(cacheName).then((c) => c.put(request, copy));

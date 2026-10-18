@@ -39,6 +39,16 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="wren", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def revalidate_app_files(request, call_next):
+    # Without this, browsers guess the app's HTML/JS are fresh for hours after an
+    # update and can pair a new page with an old script. Media can stay cached.
+    response = await call_next(request)
+    if not request.url.path.startswith("/media/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 # ---- library ----------------------------------------------------------------------
 
 @app.get("/api/library")
