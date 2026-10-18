@@ -57,6 +57,7 @@ const ICONS = {
   chevronDown: '<path d="M5.5 9 12 15.5 18.5 9"/>',
   refresh: '<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4h-4"/>',
   moon: '<path d="M19.5 14.6A7.8 7.8 0 1 1 9.4 4.5a6.3 6.3 0 0 0 10.1 10.1z"/>',
+  expand: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
   moonFill: '<path d="M19.5 14.6A7.8 7.8 0 1 1 9.4 4.5a6.3 6.3 0 0 0 10.1 10.1z" fill="currentColor"/>',
 };
 
@@ -804,6 +805,7 @@ function play(ep) {
   const next = isVideo ? videoEl : audioEl;
   handoff = false;
   wantPlaying = true;
+  videoEl.classList.remove("stale");
   if (next !== media) {
     // Stop and unload the other element before switching.
     media.pause();
@@ -852,42 +854,104 @@ function unlockAudio(ep) {
   audioEl.muted = false;
 }
 
+// When iOS last paused the video on its own, to measure how early it does that.
+let videoPausedAt = 0;
+videoEl.addEventListener("pause", () => { videoPausedAt = performance.now(); });
+
 function handOffToAudio() {
   if (handoff || media !== videoEl || !current || current.mode !== "video" || !wantPlaying) return;
+  handbackToken++; // cancel any hand-back still waiting
   const t = videoEl.currentTime;
   const rate = videoEl.playbackRate;
   if (!audioEl.src.endsWith(current.media_url)) audioEl.src = current.media_url;
   media = audioEl;
   handoff = true;
   videoEl.pause();
+  // Hide the frozen frame; it fades back in once the video plays from the new spot.
+  videoEl.classList.add("stale");
+  const t0 = performance.now();
   const start = () => {
-    audioEl.currentTime = t;
+    if (Math.abs(audioEl.currentTime - t) > 0.25) audioEl.currentTime = t;
     audioEl.playbackRate = rate;
-    audioEl.play()
-      .then(() => clientLog(`handoff: video -> audio at ${Math.round(t)}s`))
-      .catch((err) => {
-        clientLog(`handoff blocked at ${Math.round(t)}s: ${err.name} ${err.message}`);
-        media = videoEl;
-        handoff = false;
-      });
+    audioEl.addEventListener("playing", () => {
+      clientLog(`handoff: video -> audio at ${Math.round(t)}s, sound after ${Math.round(performance.now() - t0)}ms`);
+    }, { once: true });
+    audioEl.play().catch((err) => {
+      clientLog(`handoff blocked at ${Math.round(t)}s: ${err.name} ${err.message}`);
+      media = videoEl;
+      handoff = false;
+      videoEl.classList.remove("stale");
+    });
   };
   if (audioEl.readyState >= 1) start();
   else audioEl.addEventListener("loadedmetadata", start, { once: true });
 }
 
+// Hand back without a gap: keep the audio playing while the video gets ready a
+// little ahead, then start the video and stop the audio when they line up.
+let handbackToken = 0;
+
 function handBackToVideo() {
   if (!handoff) return;
-  const t = audioEl.currentTime;
-  const playing = !audioEl.paused;
+  const token = ++handbackToken;
+  if (audioEl.paused) {
+    finishHandback(audioEl.currentTime, false);
+    return;
+  }
+  let lead = 1.5; // seconds ahead of the audio to cue the video
+  const attempt = () => {
+    if (token !== handbackToken) return;
+    const target = audioEl.currentTime + lead * audioEl.playbackRate;
+    videoEl.currentTime = target;
+    whenReady(videoEl, () => {
+      if (token !== handbackToken || !handoff) return;
+      const wait = (target - audioEl.currentTime) / audioEl.playbackRate;
+      if (wait < 0) {
+        // The video took longer than the lead: cue it further ahead and retry.
+        lead *= 2;
+        if (lead > 12) finishHandback(audioEl.currentTime, true);
+        else attempt();
+        return;
+      }
+      setTimeout(() => {
+        if (token === handbackToken && handoff) finishHandback(target, true, true);
+      }, wait * 1000);
+    });
+  };
+  attempt();
+}
+
+function whenReady(el, fn) {
+  if (el.readyState >= 3 && !el.seeking) fn();
+  else el.addEventListener("canplay", fn, { once: true });
+}
+
+function finishHandback(t, play, alreadyCued = false) {
   media = videoEl; // switch first, so the audio's pause event is ignored
   handoff = false;
+  if (!alreadyCued) videoEl.currentTime = t;
+  const reveal = () => videoEl.classList.remove("stale");
+  if (play) {
+    videoEl.addEventListener("playing", reveal, { once: true });
+    videoEl.play().catch((err) => { clientLog(`handback play failed: ${err.name}`); reveal(); });
+  } else if (videoEl.seeking) {
+    videoEl.addEventListener("seeked", reveal, { once: true });
+  } else {
+    reveal();
+  }
   audioEl.pause();
-  videoEl.currentTime = t;
-  if (playing) videoEl.play().catch((err) => clientLog(`handback play failed: ${err.name}`));
-  clientLog(`handback: audio -> video at ${Math.round(t)}s (${playing ? "playing" : "paused"})`);
+  clientLog(`handback: audio -> video at ${Math.round(t)}s (${play ? (alreadyCued ? "seamless" : "re-cued") : "paused"})`);
   syncPlayButtons();
   syncTime();
 }
+
+// While a video plays on screen, keep the paused audio element cued near the
+// same spot, so a hand-off has data ready instead of starting cold.
+setInterval(() => {
+  if (handoff || media !== videoEl || videoEl.paused || document.visibilityState !== "visible") return;
+  if (!current || current.mode !== "video" || !audioEl.src.endsWith(current.media_url)) return;
+  audioEl.currentTime = videoEl.currentTime + 1;
+}, 10000);
 
 function openSheet() {
   const el = $("sheet");
@@ -916,7 +980,7 @@ const sheetEl = $("sheet");
 
 sheetEl.addEventListener("touchstart", (e) => {
   // Leave the scrubber, the video's own controls and the sleep menu alone.
-  if (e.touches.length !== 1 || e.target.closest("input, video, .popover, #sleep-backdrop, .scrubber")) return;
+  if (e.touches.length !== 1 || e.target.closest("input, .popover, #sleep-backdrop, .scrubber")) return;
   drag = { y: e.touches[0].clientY, t: Date.now(), dy: 0 };
 }, { passive: true });
 
@@ -1096,6 +1160,14 @@ function showTime(t) {
 }
 
 $("play").addEventListener("click", togglePlay);
+videoEl.addEventListener("click", togglePlay); // tap the video to pause / play
+// Full screen: iPhones only allow it through iOS's own video player
+// (webkitEnterFullscreen); other browsers use the standard API.
+$("fullscreen").addEventListener("click", () => {
+  if (!document.fullscreenEnabled && videoEl.webkitEnterFullscreen) videoEl.webkitEnterFullscreen();
+  else if (videoEl.requestFullscreen) videoEl.requestFullscreen().catch(() => {});
+  else if (videoEl.webkitEnterFullscreen) videoEl.webkitEnterFullscreen();
+});
 $("mini-play").addEventListener("click", togglePlay);
 $("mini-open").addEventListener("click", openSheet);
 $("sheet-close").addEventListener("click", closeSheet);
@@ -1232,7 +1304,7 @@ async function pollJob(jobId) {
 // apps. Speed matters, not timing: iOS keeps nudging a list by fractions of a
 // pixel (and firing scroll events) well after it looks still, and taps then
 // must still work.
-const TAPPABLE = 'button, a[href], [role="menuitemradio"], #sleep-backdrop';
+const TAPPABLE = 'button, a[href], [role="menuitemradio"], #sleep-backdrop, video';
 const MOVING_PX_PER_MS = 0.25; // ~250 px/s: faster than this reads as "still scrolling"
 let lastScroll = { at: 0, top: 0, speed: 0 };
 let tapStart = null;
@@ -1273,8 +1345,8 @@ document.addEventListener("touchend", (e) => {
   const tap = tapStart;
   tapStart = null;
   if (!tap || tap.stoppingScroll || performance.now() - tap.at > 500) return;
-  // Leave form controls (sliders, text fields, the Audio/Video toggle) and video to iOS.
-  if (tap.target.closest("input, select, textarea, label, video")) return;
+  // Leave form controls (sliders, text fields, the Audio/Video toggle) to iOS.
+  if (tap.target.closest("input, select, textarea, label")) return;
   const el = tap.target.closest(TAPPABLE);
   if (!el || el.disabled) return;
   e.preventDefault(); // skip Safari's own (delayed) click so it doesn't fire twice
@@ -1354,7 +1426,8 @@ window.addEventListener("hashchange", () => onRoute());
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") {
     if (current?.mode === "video") {
-      clientLog(`hidden: video ${videoEl.paused ? "already paused" : "playing"}, wantPlaying=${wantPlaying}`);
+      const early = videoEl.paused ? ` (iOS paused it ${Math.round(performance.now() - videoPausedAt)}ms earlier)` : "";
+      clientLog(`hidden: video ${videoEl.paused ? "already paused" : "playing"}${early}, wantPlaying=${wantPlaying}`);
     }
     handOffToAudio();
     return;
