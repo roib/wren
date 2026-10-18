@@ -12,6 +12,8 @@
   --warn: #b5650d;
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
   --radius: 14px;
+  --scroll-thumb: rgba(0, 0, 0, 0.18);
+  --scroll-thumb-hover: rgba(0, 0, 0, 0.32);
   color-scheme: light;
 }
 
@@ -29,11 +31,21 @@
     --ok: #4cc38a;
     --warn: #f0a24b;
     --shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    --scroll-thumb: rgba(255, 255, 255, 0.12);
+    --scroll-thumb-hover: rgba(255, 255, 255, 0.24);
     color-scheme: dark;
   }
 }
 
 * { box-sizing: border-box; }
+
+/* Thin, dim scroll bars on every scrolling area (desktop; phones overlay their own). */
+* { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background-color: var(--scroll-thumb-hover); }
+::-webkit-scrollbar-corner { background: transparent; }
 [hidden] { display: none !important; }
 
 /* Feel like an app on iPhone: no pinch/double-tap zoom, no rubber-band
