@@ -10,7 +10,7 @@ podcast feeds. Subscribe to a show, and Wren downloads new episodes as audio
 Apple Podcasts or any other podcast app.
 
 Wren comes with a small web app for managing it, built to feel at home as an
-iPhone home-screen app.
+iPhone home-screen app, with a desktop layout for wide browser windows.
 
 <p align="center">
   <img src="docs/screenshots/shows.png" alt="Shows: every subscription with its artwork, format badges and status" width="260">
@@ -84,6 +84,22 @@ It also helps with:
   `/#/add?url=<link>` with the link already looked up.
 - **Get notifications.** Turn them on from the Alerts page. Push only works
   in the home-screen app, not in a Safari tab.
+
+### On the desktop
+
+The same app, in any browser window 1024 px or wider, switches to a desktop
+layout. Narrower windows get the phone layout.
+
+- **Three panes.** A sidebar (Add, Shows, Single episodes, Alerts, Status and
+  the downloader's state), the show list with a filter and quick filters
+  (All, Audio, Video, Needs attention), and the selected show or page.
+- **Add from any YouTube tab.** The Add page has an *Add to Wren* bookmarklet
+  to drag to your bookmarks bar; click it on a YouTube page and Wren opens
+  with the link looked up.
+- **Notifications** work in desktop browsers too, from the Alerts page.
+  Chrome, Edge, Firefox and Safari can receive them. Chromium builds without
+  Google's API keys (common on Linux) can't; in Brave, turn on "Use Google
+  services for push messaging" first.
 
 ## Adding a show to Apple Podcasts
 
