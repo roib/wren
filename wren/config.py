@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.environ.get("WREN_DATA", ROOT / "data"))
@@ -12,9 +13,33 @@ MAX_HEIGHT = int(os.environ.get("WREN_MAX_HEIGHT", "720"))
 AUDIO_BITRATE_KBPS = int(os.environ.get("WREN_AUDIO_KBPS", "0"))
 
 # Subscriptions
-DOWNLOAD_PAUSE_SECONDS = int(os.environ.get("WREN_DOWNLOAD_PAUSE", "5"))
 MAX_ATTEMPTS = 5  # failed downloads are retried on later syncs up to this many times
-POLL_MINUTES = int(os.environ.get("WREN_POLL_MINUTES", "60"))
+
+
+def _range(value: str) -> tuple[int, int]:
+    """Parse "60-120" (or "90") into (low, high)."""
+    lo, _, hi = value.partition("-")
+    return int(lo), int(hi or lo)
+
+
+# Show checks: every POLL_MINUTES, shifted randomly by up to POLL_JITTER_MINUTES.
+POLL_MINUTES = int(os.environ.get("WREN_POLL_MINUTES", "120"))
+POLL_JITTER_MINUTES = 15
+
+# Automatic checks and subscription downloads only happen during these hours
+# (start inclusive, end exclusive; "22-6" wraps past midnight; "0-24" is always).
+ACTIVE_HOURS = _range(os.environ.get("WREN_ACTIVE_HOURS", "7-23"))
+try:
+    TIMEZONE = ZoneInfo(os.environ.get("WREN_TZ") or "America/Los_Angeles")
+except ZoneInfoNotFoundError:
+    TIMEZONE = ZoneInfo("UTC")
+
+# Go easy on YouTube: a random pause between subscription downloads, a cap per
+# hour, and a pause on everything when YouTube starts rate-limiting.
+DOWNLOAD_PAUSE = _range(os.environ.get("WREN_DOWNLOAD_PAUSE", "60-120"))
+MAX_DOWNLOADS_PER_HOUR = int(os.environ.get("WREN_MAX_DOWNLOADS_PER_HOUR", "6"))
+BLOCK_PAUSE_MINUTES = int(os.environ.get("WREN_BLOCK_PAUSE_MINUTES", "120"))
+
 # Set WREN_WORKER=0 to run the server without background downloads/polling.
 WORKER_ENABLED = os.environ.get("WREN_WORKER", "1") != "0"
 # Optional Netscape-format cookies file for yt-dlp, if YouTube starts asking

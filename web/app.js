@@ -401,8 +401,11 @@ function workerStatus() {
   if (!queueInfo) return subs === null ? "Can't reach the server right now." : "";
   const w = queueInfo.worker;
   const due = dueCount();
+  const clock = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   let text = "Up to date";
-  if (w.activity === "checking shows") text = "Checking for new episodes…";
+  if (w.paused_until) text = `YouTube is rate-limiting the server · paused until ${clock(w.paused_until)}`;
+  else if (w.activity === "checking shows") text = "Checking for new episodes…";
+  else if (due && !w.active_now) text = `${plural(due, "download")} waiting until ${clock(w.resume_at)}`;
   else if (due) text = `Downloading · ${plural(due, "episode")} to go`;
   else if (w.activity === "downloading") text = "Downloading…";
   else if (retrying().length) text = `Waiting to retry ${plural(retrying().length, "download")}`;

@@ -12,7 +12,7 @@ WORKDIR /app
 
 # Dependencies first so code changes don't reinstall them
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir "yt-dlp[default]" fastapi "uvicorn[standard]"
+RUN pip install --no-cache-dir "yt-dlp[default]" fastapi "uvicorn[standard]" tzdata
 
 COPY wren ./wren
 COPY web ./web
@@ -25,6 +25,8 @@ USER wren
 
 ENV WREN_DATA=/data \
     WREN_WEB=/app/web \
+    WREN_TZ=America/Los_Angeles \
+    TZ=America/Los_Angeles \
     PYTHONUNBUFFERED=1
 VOLUME /data
 EXPOSE 8000

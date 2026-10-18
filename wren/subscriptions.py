@@ -6,17 +6,23 @@ and trims each show to its keep_last limit.
 """
 
 import logging
+import random
 import re
 import time
 
 from . import db, downloader, feeds
-from .config import DOWNLOAD_PAUSE_SECONDS, MAX_ATTEMPTS, MEDIA_DIR
+from .config import DOWNLOAD_PAUSE, MAX_ATTEMPTS, MEDIA_DIR
 
 log = logging.getLogger("wren")
 
 
 def _now() -> int:
     return int(time.time())
+
+
+def pause_seconds() -> float:
+    """A random gap between downloads, so they don't arrive at YouTube as a burst."""
+    return random.uniform(*DOWNLOAD_PAUSE)
 
 
 def _check_regex(pattern: str | None) -> None:
@@ -210,6 +216,12 @@ def _download_item(show: dict, item: dict) -> bool:
             _set_item(show["id"], item["item_id"], status="skipped", error=str(e), next_try=0)
         log.info("%s: skipped %s (%s)", show["name"], item["title"], e)
         return False
+    except downloader.RateLimited as e:
+        # Not this episode's fault: don't use up an attempt, just release it and
+        # let the caller pause everything.
+        _set_item(show["id"], item["item_id"], error=str(e)[:500], next_try=0)
+        log.warning("%s: YouTube is rate-limiting us: %s", show["name"], e)
+        raise
     except Exception as e:
         attempts = item["attempts"] + 1
         status = "failed" if attempts >= MAX_ATTEMPTS else "queued"
@@ -235,8 +247,12 @@ def _download_queue(show: dict) -> int:
     done = 0
     for n, item in enumerate(items):
         if n:
-            time.sleep(DOWNLOAD_PAUSE_SECONDS)  # go easy on YouTube
-        done += _download_item(show, item)
+            time.sleep(pause_seconds())  # go easy on YouTube
+        try:
+            done += _download_item(show, item)
+        except downloader.RateLimited:
+            log.warning("Stopping: YouTube is rate-limiting this machine; try again later.")
+            break
     return done
 
 

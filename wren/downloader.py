@@ -5,6 +5,7 @@ Audio: AAC in .m4a, kept as-is unless AUDIO_BITRATE_KBPS is set to re-encode it.
 """
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -32,6 +33,10 @@ def _ydl_opts(mode: str) -> dict:
         "noplaylist": True,
         "quiet": False,
         "noprogress": True,
+        # Small random pauses so one download isn't a burst of requests.
+        "sleep_interval_requests": 1,
+        "sleep_interval": 3,
+        "max_sleep_interval": 8,
         "postprocessors": [
             {"key": "FFmpegThumbnailsConvertor", "format": "jpg"},
         ],
@@ -87,6 +92,17 @@ class Skipped(Exception):
     """The video exists but shouldn't be downloaded (live, too short, ...)."""
 
 
+class RateLimited(Exception):
+    """YouTube is throttling us (HTTP 429 or "confirm you're not a bot")."""
+
+
+_RATE_LIMIT = re.compile(r"\b429\b|Too Many Requests|confirm you.re not a bot", re.I)
+
+
+def is_rate_limited(err: BaseException | str) -> bool:
+    return bool(_RATE_LIMIT.search(str(err)))
+
+
 def _skip_reason(info: dict, min_duration: int) -> str | None:
     live = info.get("live_status")
     if live in ("is_live", "is_upcoming"):
@@ -113,13 +129,18 @@ def download(url: str, mode: str = "audio", show_id: int | None = None,
         raise ValueError("mode must be 'audio' or 'video'")
     MEDIA_DIR.mkdir(parents=True, exist_ok=True)
 
-    with yt_dlp.YoutubeDL(_ydl_opts(mode)) as ydl:
-        # Look first, so skipped videos cost one metadata request and no download.
-        info = ydl.extract_info(url, download=False)
-        reason = _skip_reason(info, min_duration)
-        if reason:
-            raise Skipped(reason)
-        info = ydl.process_ie_result(info, download=True)
+    try:
+        with yt_dlp.YoutubeDL(_ydl_opts(mode)) as ydl:
+            # Look first, so skipped videos cost one metadata request and no download.
+            info = ydl.extract_info(url, download=False)
+            reason = _skip_reason(info, min_duration)
+            if reason:
+                raise Skipped(reason)
+            info = ydl.process_ie_result(info, download=True)
+    except yt_dlp.utils.DownloadError as e:
+        if is_rate_limited(e):
+            raise RateLimited(str(e)) from e
+        raise
 
     media = _media_file(info)
     if mode == "audio" and AUDIO_BITRATE_KBPS > 0:
