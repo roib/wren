@@ -183,3 +183,14 @@ def test_recent_downloads(phone, show):
     phone.locator(".ep-head").first.tap()
     phone.locator(".ep.open").get_by_text("Go to show").tap()
     playwright.expect(title(phone)).to_have_text("Test Show")
+
+
+def test_download_times(phone, show):
+    phone.goto(f"/#/show/{show['id']}")
+    phone.locator(".ep-head").first.tap()
+    playwright.expect(phone.locator(".ep.open .ep-when")).to_contain_text("Downloaded today at")
+    phone.goto("/#/status")
+    dots = phone.locator(".act-dot")
+    playwright.expect(dots).to_have_count(2)
+    dots.last.tap()  # both finished the same minute; the later one is on top
+    playwright.expect(phone.locator(".act-detail")).to_contain_text("Test Show")

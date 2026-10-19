@@ -83,6 +83,11 @@ def recent():
     return {"entries": admin.recent(), "worker": background.status()}
 
 
+@app.get("/api/activity")
+def activity():
+    return {**admin.activity(), "worker": background.status()}
+
+
 class ResolveRequest(BaseModel):
     url: str
 

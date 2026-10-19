@@ -530,6 +530,42 @@ main { margin-top: 16px; }
 .setting-hint { margin: 6px 0 0; color: var(--muted); font-size: 13px; line-height: 1.4; }
 .page-note { margin: 14px 4px 0; color: var(--muted); font-size: 13px; line-height: 1.4; }
 
+/* When an episode was downloaded: in Recent rows, and in an opened row. */
+.when { white-space: nowrap; }
+.when .ic-wrap { display: inline-block; vertical-align: -2px; margin-right: 2px; }
+.when .ic { width: 13px; height: 13px; }
+/* Lined up with the episode's title, like the actions below it. */
+.ep-when { margin: 0; padding: 0 12px 10px 102px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+
+/* Download activity (Status): a row per day, hours across, a dot per download. */
+.act { padding: 14px 14px 12px; }
+.act-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 14px; font-size: 14px; margin-bottom: 10px; }
+.act-legend { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.act-key { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--fg); }
+.act-key.video { background: var(--fg); }
+.act-key.band { width: 14px; border-radius: 3px; border: 0; background: var(--line-strong); opacity: 0.45; margin-left: 4px; }
+.act-row { display: grid; grid-template-columns: 74px 1fr; align-items: center; height: 24px; }
+.act-day { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.act-track { position: relative; height: 100%; border-top: 1px solid var(--line); margin-right: 6px; }
+.act-row:first-child .act-track { border-top: 0; }
+.act-band { position: absolute; top: 3px; bottom: 3px; background: var(--line-strong); opacity: 0.35; border-radius: 3px; }
+/* The button is the tap target; its ::after is the 9 px dot, ringed in the card's
+   colour so dots close together stay apart. */
+.act-dot { position: absolute; top: 0; width: 20px; height: 100%; margin-left: -10px; padding: 0; border: 0;
+  background: none; cursor: pointer; }
+.act-dot::after { content: ""; position: absolute; left: 50%; top: 50%; width: 9px; height: 9px; transform: translate(-50%, -50%);
+  border-radius: 50%; border: 1.5px solid var(--fg); background: var(--surface); box-shadow: 0 0 0 2px var(--surface); box-sizing: border-box; }
+.act-dot.video::after { background: var(--fg); }
+.act-dot:hover::after, .act-dot.picked::after { width: 13px; height: 13px; }
+.act-dot.picked { z-index: 1; }
+.act-axis { height: 18px; }
+.act-axis .act-track { border-top: 1px solid var(--line); }
+.act-tick { position: absolute; top: 3px; transform: translateX(-50%); font-size: 11px; color: var(--muted); }
+.act-tick:first-child { transform: none; }
+.act-tick:last-child { transform: translateX(-100%); }
+.act-detail { margin: 10px 0 0; min-height: 2.8em; font-size: 13px; line-height: 1.4; color: var(--muted); }
+.act-detail strong { color: var(--fg); font-weight: 600; }
+
 .switch {
   position: relative;
   width: 51px;
@@ -836,7 +872,7 @@ video::cue { background: rgba(0, 0, 0, 0.65); color: #fff; font-size: 0.85em; }
   .feed-buttons { display: flex; }
   .hero-actions { flex: 1 1 100%; }
   .ep-thumb { width: 96px; height: 54px; }
-  .ep-actions { padding-left: 118px; }
+  .ep-actions, .ep-when { padding-left: 118px; }
 
   /* Settings in two columns. */
   .settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }

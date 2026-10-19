@@ -25,7 +25,7 @@ three-pane desktop layout.
 | `wren/artwork.py` | Square show artwork from the channel picture, with the Wren badge (`wren-badge.png`) |
 | `wren/admin.py` | Read models for the app (`/api/overview`, show detail, singles) and link resolving (`/api/resolve`) |
 | `wren/push.py` | Alert log (`alert_log` table) and Web Push (VAPID key in `$WREN_DATA/vapid_private.pem`) |
-| `wren/db.py` | SQLite schema + `_migrate()` (add-column migrations); WAL mode |
+| `wren/db.py` | SQLite schema + `_migrate()` (add-column migrations); WAL mode; `download_log` (every finished download, for the Status chart) |
 | `wren/config.py` | All `WREN_*` settings (documented in README) |
 | `wren/cli.py` | `wren serve / subscribe / shows / sync / add / list / unsubscribe` |
 | `web/` | The app: `index.html`, `app.js`, `style.css`, `sw.js` (push only), icons. No build step, no framework |

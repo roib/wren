@@ -116,6 +116,7 @@ def _entries_from_episodes(rows: list[dict]) -> list[dict]:
         })
         e["copies"].append({
             "mode": r["mode"],
+            "added_at": r["added_at"],
             "media_url": _media(r["file"]),
             "bytes": _size(r["file"]),
             "subs_url": _media(r["subtitles"]),
@@ -203,6 +204,22 @@ def recent(limit: int = RECENT_LIMIT, shows: list[dict] | None = None) -> list[d
         e["show"] = names.get(sid, "Single episodes")
     # Rows came newest first, so each entry's added_at is its latest copy's.
     return sorted(entries, key=lambda e: e["added_at"], reverse=True)[:limit]
+
+
+ACTIVITY_DAYS = 14
+
+
+def activity(days: int = ACTIVITY_DAYS) -> dict:
+    """Every download of the last `days` days, oldest first, for the Status
+    page's chart. From the download log, so deleted episodes still count."""
+    names = {s["id"]: s["name"] for s in subscriptions.list_shows()}
+    with db.connect() as conn:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT id, video_id, mode, show_id, title, bytes, at FROM download_log WHERE at >= ? ORDER BY at",
+            (int(time.time()) - days * 86400,))]
+    for r in rows:
+        r["show"] = names.get(r["show_id"], "Single episodes")
+    return {"days": days, "downloads": rows}
 
 
 # ---- resolving a pasted link --------------------------------------------------------

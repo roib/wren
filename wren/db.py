@@ -2,7 +2,7 @@ import sqlite3
 import time
 from contextlib import contextmanager
 
-from .config import DATA_DIR, DB_PATH
+from .config import DATA_DIR, DB_PATH, MEDIA_DIR
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS episodes (
@@ -78,6 +78,19 @@ CREATE TABLE IF NOT EXISTS alert_log (
 );
 CREATE INDEX IF NOT EXISTS alert_log_open ON alert_log (key) WHERE resolved_at IS NULL;
 
+-- Every finished download, kept after the episode itself is deleted (by a
+-- show's keep-last limit or by hand), for the Status page's activity chart.
+CREATE TABLE IF NOT EXISTS download_log (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    video_id TEXT NOT NULL,
+    mode     TEXT NOT NULL,
+    show_id  INTEGER,         -- NULL for manual adds
+    title    TEXT NOT NULL,
+    bytes    INTEGER,
+    at       INTEGER NOT NULL -- when the download finished
+);
+CREATE INDEX IF NOT EXISTS download_log_at ON download_log (at);
+
 -- Manual "add this URL" downloads, processed by the background worker.
 CREATE TABLE IF NOT EXISTS jobs (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -117,6 +130,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.execute("DROP TABLE IF EXISTS alerts")  # replaced by alert_log
     # WAL lets the API read while the worker thread writes.
     conn.execute("PRAGMA journal_mode = WAL")
+    # The download log started after the library: seed it once from what's there.
+    # (After the WAL switch, which can't happen inside the transaction this opens.)
+    if not conn.execute("SELECT 1 FROM download_log LIMIT 1").fetchone():
+        conn.execute("""INSERT INTO download_log (video_id, mode, show_id, title, at)
+                        SELECT video_id, mode, show_id, title, added_at FROM episodes ORDER BY added_at""")
     _migrated = True
 
 
@@ -136,11 +154,18 @@ def connect():
 
 
 def upsert_episode(ep: dict) -> None:
+    """Add a downloaded episode to the library, and to the download log."""
     ep = {**ep, "added_at": ep.get("added_at") or int(time.time())}
     cols = ", ".join(ep)
     params = ", ".join(f":{k}" for k in ep)
+    try:
+        size = (MEDIA_DIR / ep["file"]).stat().st_size
+    except OSError:
+        size = None
     with connect() as conn:
         conn.execute(f"INSERT OR REPLACE INTO episodes ({cols}) VALUES ({params})", ep)
+        conn.execute("INSERT INTO download_log (video_id, mode, show_id, title, bytes, at) VALUES (?, ?, ?, ?, ?, ?)",
+                     (ep["video_id"], ep["mode"], ep.get("show_id"), ep["title"], size, ep["added_at"]))
 
 
 def list_episodes() -> list[dict]:

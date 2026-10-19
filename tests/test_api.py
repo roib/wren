@@ -117,6 +117,23 @@ def test_recent_downloads(client, show, fake_downloader):
     assert client.get("/api/overview").json()["recent_count"] == 1
 
 
+def test_activity(client, show, fake_downloader):
+    fake_downloader.download("https://www.youtube.com/watch?v=s1")
+    subscriptions.delete_episode("e1")  # still counts: it was downloaded
+    with db.connect() as conn:
+        conn.execute("UPDATE download_log SET at = 1 WHERE video_id = 'e2'")  # long ago
+    body = client.get("/api/activity").json()
+    assert body["days"] == 14
+    assert [(d["video_id"], d["show"]) for d in body["downloads"]] == [("e1", "Test Show"), ("s1", "Single episodes")]
+    assert body["downloads"][0]["bytes"] == 100
+    assert body["worker"]["active_hours"]
+
+
+def test_episode_copies_say_when_they_were_downloaded(client, show):
+    entry = client.get(f"/api/shows/{show['id']}/detail").json()["entries"][0]
+    assert entry["copies"][0]["added_at"] > 0
+
+
 def test_singles_feed(client, fake_downloader):
     fake_downloader.download("https://www.youtube.com/watch?v=s1")
     ch = ET.fromstring(client.get("/feeds/singles.xml").text).find("channel")

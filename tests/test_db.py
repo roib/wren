@@ -1,7 +1,7 @@
 import sqlite3
 
 from wren import db
-from wren.config import DATA_DIR, DB_PATH
+from wren.config import DATA_DIR, DB_PATH, MEDIA_DIR
 
 # The tables as an early version of Wren made them, before the columns that
 # _migrate() adds.
@@ -73,3 +73,26 @@ def test_upsert_and_list_episodes():
     assert [(e["video_id"], e["title"]) for e in db.list_episodes()] == [("a", "A again"), ("b", "B")]
     assert db.has_episode("b", "video")
     assert not db.has_episode("b", "audio")
+
+
+def test_download_log_is_seeded_once_from_the_library():
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    old = sqlite3.connect(DB_PATH)
+    old.executescript(OLD_SCHEMA)
+    old.close()
+    with db.connect() as conn:
+        assert [tuple(r) for r in conn.execute("SELECT video_id, mode, title, at FROM download_log")] == [
+            ("abc", "audio", "Old episode", 1)]
+    db._migrated = False  # as after a restart
+    with db.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM download_log").fetchone()[0] == 1
+
+
+def test_downloads_are_logged_and_outlive_the_episode():
+    (MEDIA_DIR / "a.m4a").write_bytes(b"x" * 1234)
+    db.upsert_episode({"video_id": "a", "mode": "audio", "title": "A", "source_url": "u", "file": "a.m4a",
+                       "added_at": 50, "show_id": 3})
+    with db.connect() as conn:
+        conn.execute("DELETE FROM episodes")
+        rows = [dict(r) for r in conn.execute("SELECT video_id, mode, show_id, title, bytes, at FROM download_log")]
+    assert rows == [{"video_id": "a", "mode": "audio", "show_id": 3, "title": "A", "bytes": 1234, "at": 50}]

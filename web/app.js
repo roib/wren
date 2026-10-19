@@ -74,6 +74,33 @@ function fmtClock(ts) {
   return new Date(ts * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
+// Days between a time and today, in this device's time zone (0 = today).
+function daysAgo(ts) {
+  return Math.round((new Date().setHours(0, 0, 0, 0) - new Date(ts * 1000).setHours(0, 0, 0, 0)) / 86400000);
+}
+
+// "7:42 AM", "Yesterday, 7:42 AM", "Oct 16, 7:42 AM": short, for a row.
+function fmtWhen(ts) {
+  const days = daysAgo(ts);
+  if (days === 0) return fmtClock(ts);
+  if (days === 1) return `Yesterday, ${fmtClock(ts)}`;
+  return `${fmtDate(ymd(ts))}, ${fmtClock(ts)}`;
+}
+
+// "today at 7:42 AM", "Sun, Oct 19 at 7:42 AM": in a sentence.
+function fmtWhenLong(ts) {
+  const days = daysAgo(ts);
+  const day = days === 0 ? "today" : days === 1 ? "yesterday"
+    : new Date(ts * 1000).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric",
+      ...(new Date(ts * 1000).getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }) });
+  return `${day} at ${fmtClock(ts)}`;
+}
+
+const ymd = (ts) => {
+  const d = new Date(ts * 1000);
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+};
+
 function ago(ts) {
   if (!ts) return "never";
   const m = Math.floor((Date.now() / 1000 - ts) / 60);
@@ -195,6 +222,7 @@ async function load() {
     if (r.name === "show") jobs.push(api(`/api/shows/${r.id}/detail`).then((d) => details.set(r.id, d)));
     else if (r.name === "singles") jobs.push(api("/api/singles").then((d) => details.set("singles", d)));
     else if (r.name === "recent") jobs.push(api("/api/recent").then((d) => details.set("recent", d)));
+    else if (r.name === "status") jobs.push(api("/api/activity").then((a) => { activity = a; }));
     else if (r.name === "alerts") {
       jobs.push(api("/api/alerts").then(async (a) => { alertList = a; if (!pushState) await loadPushState(); }));
     }
@@ -590,7 +618,9 @@ function pendingRow(e, onRetry) {
       canRetry ? h("button", { class: "action", onclick: () => onRetry(e) }, e.state === "failed" ? "Retry" : "Download") : null));
 }
 
-function episodeRow(e, { withShow = false } = {}) {
+// withShow: name the show and give the download time (Recent, home), as the
+// row isn't on its show's page. when: how to write that time.
+function episodeRow(e, { withShow = false, when = fmtWhen } = {}) {
   const open = expanded === e.video_id;
   const size = e.copies.reduce((n, c) => n + c.bytes, 0);
   return h("li", { class: `ep${open ? " open" : ""}` },
@@ -612,10 +642,14 @@ function episodeRow(e, { withShow = false } = {}) {
         h("span", { class: "ep-meta" },
           h("span", { class: "badges" }, e.copies.map((c) => badge(c.mode)),
             e.copy_pending ? h("span", { class: "badge muted" }, "Video soon") : null),
-          h("span", {}, join(withShow ? e.show : null, fmtDate(e.upload_date), fmtDuration(e.duration), fmtBytes(size)))))),
+          withShow
+            ? h("span", {}, `${e.show} · `, h("span", { class: "when" }, icon("download"), when(e.added_at)),
+              [fmtDuration(e.duration), fmtBytes(size)].filter(Boolean).map((x) => ` · ${x}`).join(""))
+            : h("span", {}, join(fmtDate(e.upload_date), fmtDuration(e.duration), fmtBytes(size)))))),
     // Always rendered; collapsed with CSS until the row is open.
     h("div", { class: "collapse" },
       h("div", { class: "collapse-body" },
+        h("p", { class: "ep-when" }, ...downloadedLines(e)),
         h("div", { class: "ep-actions" },
           e.copies.map((c) => h("button", { class: "action", onclick: () => openPlayer(e, c) },
             icon("play"), c.mode === "video" ? "Play video" : "Play audio")),
@@ -625,6 +659,16 @@ function episodeRow(e, { withShow = false } = {}) {
             icon("external"), "YouTube"),
           h("button", { class: "action subtle danger", onclick: (ev) => deleteEpisode(e, ev.currentTarget) },
             icon("trash"), "Delete")))));
+}
+
+// When the episode came out and when the server got it (each copy, if they differ).
+function downloadedLines(e) {
+  const times = e.copies.map((c) => c.added_at);
+  const same = Math.max(...times) - Math.min(...times) < 120;
+  const lines = [e.upload_date ? `Published ${fmtDate(e.upload_date)}` : null];
+  if (same) lines.push(`Downloaded ${fmtWhenLong(times[0])}`);
+  else for (const c of e.copies) lines.push(`${c.mode === "video" ? "Video" : "Audio"} downloaded ${fmtWhenLong(c.added_at)}`);
+  return lines.filter(Boolean).flatMap((line, i) => (i ? [h("br"), line] : [line]));
 }
 
 // Two taps: the first turns the button into "Tap again to delete" for a few seconds.
@@ -794,7 +838,7 @@ function recentView(d) {
   }
   return h("div", {},
     [...days].map(([day, entries]) => section(day,
-      h("ul", { class: "card list-card" }, entries.map((e) => episodeRow(e, { withShow: true }))))),
+      h("ul", { class: "card list-card" }, entries.map((e) => episodeRow(e, { withShow: true, when: fmtClock }))))),
     h("p", { class: "page-note" }, "Episodes removed to keep a show's latest few no longer appear here."));
 }
 
@@ -979,6 +1023,86 @@ function kv(label, value) {
   return h("div", { class: "kv" }, h("span", {}, label), h("span", {}, value));
 }
 
+// ---- download activity ------------------------------------------------------------
+// One row per day (today on top), the day's hours left to right, a dot for each
+// download when it finished: hollow for audio, filled for video, like the badges.
+// Drawn in the server's time zone, so it lines up with its download hours.
+
+let activity = null; // /api/activity
+let activityPick = null; // download log id of the dot whose details are showing
+
+function zoned(ts, timeZone) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
+    timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(new Date(ts * 1000)).map((p) => [p.type, p.value]));
+  return { day: `${parts.year}-${parts.month}-${parts.day}`, hour: Number(parts.hour) + Number(parts.minute) / 60 };
+}
+
+function hourLabel(n) {
+  return n % 12 === 0 ? (n % 24 === 0 ? "12a" : "12p") : n < 12 ? `${n}a` : `${n - 12}p`;
+}
+
+function activityChart(a, w) {
+  const tz = w.timezone;
+  const pct = (hour) => `${(hour / 24) * 100}%`;
+  // The last `a.days` days in the server's time zone, today first.
+  const [y, m, d] = zoned(Date.now() / 1000, tz).day.split("-").map(Number);
+  const days = Array.from({ length: a.days }, (_, i) => new Date(Date.UTC(y, m - 1, d - i)));
+  const key = (date) => date.toISOString().slice(0, 10);
+  const byDay = new Map(days.map((date) => [key(date), []]));
+  for (const dl of a.downloads) byDay.get(zoned(dl.at, tz).day)?.push(dl);
+
+  // The download hours, as one band (or two, when they wrap past midnight).
+  const [from, to] = w.active_hours;
+  const bands = from === to || (from === 0 && to === 24) ? [[0, 24]] : from < to ? [[from, to]] : [[0, to], [from, 24]];
+
+  const detail = h("p", { class: "act-detail", "aria-live": "polite" });
+  const describe = (dl) => {
+    const t = new Date(dl.at * 1000).toLocaleString([], { timeZone: tz, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    detail.replaceChildren(h("strong", {}, dl.title), h("br"), join(dl.show, dl.mode === "video" ? "Video" : "Audio", t, fmtBytes(dl.bytes)));
+  };
+  const picked = a.downloads.find((dl) => dl.id === activityPick);
+  if (picked) describe(picked);
+  else detail.textContent = isDesktop() ? "Point at a dot to see what was downloaded." : "Tap a dot to see what was downloaded.";
+
+  const dot = (dl) => h("button", {
+    type: "button",
+    class: `act-dot ${dl.mode}${dl.id === activityPick ? " picked" : ""}`,
+    style: `left: ${pct(zoned(dl.at, tz).hour)}`,
+    "aria-label": `${dl.title}, ${dl.show}, ${fmtClock(dl.at)}`,
+    onclick: (ev) => {
+      activityPick = dl.id;
+      ev.currentTarget.closest(".act").querySelectorAll(".act-dot.picked").forEach((x) => x.classList.remove("picked"));
+      ev.currentTarget.classList.add("picked");
+      describe(dl);
+    },
+    onmouseenter: () => describe(dl),
+  });
+
+  const total = a.downloads.length;
+  return h("div", { class: "card act" },
+    h("div", { class: "act-head" },
+      h("span", {}, total ? `${plural(total, "download")} in the last ${a.days} days` : `No downloads in the last ${a.days} days`),
+      h("span", { class: "act-legend" },
+        h("span", { class: "act-key audio" }), "Audio", h("span", { class: "act-key video" }), "Video",
+        h("span", { class: "act-key band" }), "Download hours")),
+    h("div", { class: "act-grid" },
+      days.map((date, i) => {
+        const label = i === 0 ? "Today" : i === 1 ? "Yesterday"
+          : `${date.toLocaleDateString(undefined, { timeZone: "UTC", weekday: "short" })} ${date.getUTCDate()}`;
+        return h("div", { class: "act-row" },
+          h("span", { class: "act-day" }, label),
+          h("div", { class: "act-track" },
+            bands.map(([b0, b1]) => h("span", { class: "act-band", style: `left: ${pct(b0)}; width: ${pct(b1 - b0)}` })),
+            byDay.get(key(date)).map(dot)));
+      }),
+      h("div", { class: "act-row act-axis", "aria-hidden": "true" },
+        h("span", { class: "act-day" }),
+        h("div", { class: "act-track" }, [0, 4, 8, 12, 16, 20, 24].map((n) =>
+          h("span", { class: "act-tick", style: `left: ${pct(n)}` }, hourLabel(n)))))),
+    detail);
+}
+
 function statusView(data) {
   const w = data.worker;
   const [from, to] = w.active_hours;
@@ -997,6 +1121,7 @@ function statusView(data) {
         h("button", { class: "action", onclick: () => command("/api/refresh", "Checking every show…") }, icon("refresh"), "Check all now"),
         h("button", { class: "action", onclick: () => command("/api/download-now", "Downloading everything queued now…") },
           icon("download"), "Download all now"))),
+    activity ? section("Download activity", activityChart(activity, w)) : null,
     section("Queue", data.pending.length
       ? h("ul", { class: "card list-card" }, data.pending.map((p) => h("li", { class: `ep pending ${p.state}` },
         h("div", { class: "ep-head static" },
