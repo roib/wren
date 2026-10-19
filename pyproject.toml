@@ -15,6 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest", "httpx2"]  # httpx2: FastAPI's TestClient
+e2e = ["wren[test]", "playwright"]  # then: playwright install webkit chromium
 
 [project.scripts]
 wren = "wren.cli:main"
@@ -31,3 +32,4 @@ wren = ["*.png"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["e2e: the web app in a browser (Playwright); skipped when it isn't installed"]

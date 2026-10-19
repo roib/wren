@@ -83,8 +83,9 @@ three-pane desktop layout.
 ## Running and testing locally
 
 ```sh
-python -m venv .venv && .venv/bin/pip install -e '.[test]'
-.venv/bin/pytest
+python -m venv .venv && .venv/bin/pip install -e '.[e2e]'   # or '.[test]' without the browser tests
+.venv/bin/playwright install webkit chromium
+.venv/bin/pytest                # everything; -m "not e2e" for just the back end
 WREN_DATA=/tmp/wren-test WREN_WORKER=0 .venv/bin/wren serve --host 127.0.0.1 --port 8016
 ```
 
@@ -94,8 +95,14 @@ WREN_DATA=/tmp/wren-test WREN_WORKER=0 .venv/bin/wren serve --host 127.0.0.1 --p
   keep it that way. Add tests with back-end changes.
 - `WREN_WORKER=0` stops background checks and downloads; use a throwaway
   `WREN_DATA` (never the owner's data).
-- The front end has no tests: check it with `curl` against the API and the
-  browser at phone width (390×844) and desktop width. Headless screenshots:
+- `tests/test_e2e.py` drives the app in a browser (Playwright) against a live
+  server with made-up data: each page renders at phone and desktop width
+  without script errors, plus a few flows (tapping through, delete, subscribe,
+  the desktop panes). It runs in WebKit where WebKit launches (it needs
+  Ubuntu/Debian libraries), otherwise Chromium; `WREN_E2E_BROWSER` picks one.
+  Keep it small: a smoke test, not a spec of every screen.
+- Still check visual changes by eye at phone width (390×844) and desktop
+  width, in light and dark. Headless screenshots:
   `chromium --headless=new --force-dark-mode --window-size=390,844
   --force-device-scale-factor=3 --virtual-time-budget=5000 --screenshot=out.png URL`.
 - Screenshots for the README use made-up shows and generated artwork, never the
