@@ -1,0 +1,28 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install
+        run: |
+          pip install -e '.[e2e]'
+          # Ubuntu has what WebKit needs, so the browser tests run in the
+          # engine closest to iPhone Safari.
+          playwright install --with-deps webkit
+          sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: Test
+        env:
+          WREN_E2E_BROWSER: webkit  # fail rather than skip if WebKit won't launch
+        run: pytest -ra

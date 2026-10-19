@@ -61,6 +61,9 @@ def browser():
             yield b
             b.close()
             return
+        # A browser asked for by name must run (as in CI); otherwise skip.
+        if os.environ.get("WREN_E2E_BROWSER"):
+            pytest.fail("browser won't launch: " + "; ".join(errors))
         pytest.skip("no browser launches: " + "; ".join(errors))
 
 

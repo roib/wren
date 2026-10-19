@@ -101,6 +101,8 @@ WREN_DATA=/tmp/wren-test WREN_WORKER=0 .venv/bin/wren serve --host 127.0.0.1 --p
   the desktop panes). It runs in WebKit where WebKit launches (it needs
   Ubuntu/Debian libraries), otherwise Chromium; `WREN_E2E_BROWSER` picks one.
   Keep it small: a smoke test, not a spec of every screen.
+- GitHub Actions (`.github/workflows/tests.yml`) runs the whole suite, browser
+  tests in WebKit, on every push to `main` and every pull request.
 - Still check visual changes by eye at phone width (390×844) and desktop
   width, in light and dark. Headless screenshots:
   `chromium --headless=new --force-dark-mode --window-size=390,844
