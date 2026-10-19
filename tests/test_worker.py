@@ -88,3 +88,14 @@ def test_status_and_download_now():
     assert status["override"] and status["override_shows"] == [7]
     assert status["paused_until"] is None
     assert push.active_count() == 0
+
+
+def test_worker_cuts_sponsor_reads_before_anything_else(monkeypatch):
+    from wren import sponsors
+    calls = []
+    monkeypatch.setattr(sponsors, "process_next", lambda now: calls.append(now) or True)
+    w = worker.Worker()
+    w.next_poll = float("inf")
+    w.paused_until = float("inf")  # even while YouTube downloads are paused
+    assert w._step()
+    assert len(calls) == 1

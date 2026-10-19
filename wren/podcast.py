@@ -32,7 +32,10 @@ MIME = {".m4a": "audio/mp4", ".mp4": "video/mp4", ".mp3": "audio/mpeg"}
 
 
 def _pub_date(ep: dict) -> datetime:
-    # upload_date is YYYYMMDD from YouTube; fall back to when Wren downloaded it.
+    # The exact publish time where it's known (newer downloads); otherwise
+    # upload_date (YYYYMMDD from YouTube) at noon; else when Wren downloaded it.
+    if ep.get("published_at"):
+        return datetime.fromtimestamp(ep["published_at"], timezone.utc)
     if ep.get("upload_date"):
         try:
             return datetime.strptime(ep["upload_date"], "%Y%m%d").replace(hour=12, tzinfo=timezone.utc)
@@ -60,8 +63,12 @@ def _item(ep: dict, base: str) -> str:
         f'<enclosure url="{escape(base + "/media/" + ep["file"])}" length="{size}" type="{mime}"/>',
         f"<link>{escape(ep['source_url'])}</link>",
     ]
-    if ep.get("description"):
-        parts.append(f"<description>{escape(ep['description'])}</description>")
+    description = ep.get("description") or ""
+    if ep.get("sponsor_removed"):
+        m, s = divmod(ep["sponsor_removed"], 60)
+        description = f"Sponsor reads removed by Wren ({m}:{s:02d}), using SponsorBlock.\n\n{description}".strip()
+    if description:
+        parts.append(f"<description>{escape(description)}</description>")
     if d := _duration(ep.get("duration")):
         parts.append(f"<itunes:duration>{d}</itunes:duration>")
     if ep.get("thumb"):

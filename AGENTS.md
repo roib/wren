@@ -20,6 +20,7 @@ three-pane desktop layout.
 | `wren/worker.py` | The single background thread: feed checks, downloads, pacing, rate-limit pauses, daily health checks |
 | `wren/subscriptions.py` | Shows and feed items: subscribe, check a feed, download queue, video copies, retention, delete |
 | `wren/feeds.py` | Show listings via yt-dlp flat playlist extraction (channels → their `UU…` uploads playlist) |
+| `wren/sponsors.py` | Sponsor reads: SponsorBlock lookup (hash prefix), lossless ffmpeg cut, the once-only processing of held-back episodes |
 | `wren/downloader.py` | One download with yt-dlp; `Skipped`, `Unavailable`, `RateLimited` exceptions |
 | `wren/podcast.py` | RSS rendering, feed slugs, the empty-feed placeholder |
 | `wren/artwork.py` | Square show artwork from the channel picture, with the Wren badge (`wren-badge.png`) |
@@ -68,6 +69,13 @@ three-pane desktop layout.
   out). Non-uploads playlists are sorted newest first against the channel's
   uploads. Subtitles are deliberately not downloaded (they were rate-limited
   separately and failed whole downloads).
+- **Sponsor reads are cut once, never later.** Podcast apps don't fetch an
+  episode again when its file changes, so episodes of shows removing sponsor
+  reads stay out of the feeds until `WREN_SPONSOR_DELAY_HOURS` (8) after
+  YouTube published them, then are cut and published and never touched again.
+  A survey of popular shows found all SponsorBlock marks in within ~6 hours
+  (median 85 min); the first mark isn't always the last, so don't publish on
+  the first one. Video copies are cut at keyframes (stream copy, no re-encode).
 - **Apple Podcasts** won't follow an empty feed (hence the placeholder item),
   caches artwork (artwork URLs carry `?v=<mtime>`), and opens `podcast://` links
   with "Follow a Show by URL" filled in.

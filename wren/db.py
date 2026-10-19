@@ -19,6 +19,10 @@ CREATE TABLE IF NOT EXISTS episodes (
     added_at    INTEGER NOT NULL,
     show_id     INTEGER,         -- subscription it came from; NULL for manual adds
     subtitles   TEXT,            -- WebVTT file relative to MEDIA_DIR (video episodes)
+    published_at INTEGER,        -- when YouTube published it (exact, unlike upload_date)
+    sponsor_state TEXT,          -- 'pending' (held back, not in feeds yet) or 'done'; NULL if not removing
+    sponsor_removed INTEGER,     -- seconds of sponsor reads cut out
+    sponsor_segments TEXT,       -- JSON [[start, end], ...] of what was cut, in the original's seconds
     PRIMARY KEY (video_id, mode)
 );
 
@@ -34,6 +38,7 @@ CREATE TABLE IF NOT EXISTS shows (
     title_filter TEXT,                          -- optional regex episodes must match
     enabled      INTEGER NOT NULL DEFAULT 1,
     video_copy   INTEGER NOT NULL DEFAULT 0,    -- audio show: also download each episode as video
+    skip_sponsors INTEGER NOT NULL DEFAULT 0,   -- cut out sponsor reads marked on SponsorBlock
     last_checked INTEGER,
     last_error   TEXT,
     created_at   INTEGER NOT NULL
@@ -117,9 +122,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE episodes ADD COLUMN show_id INTEGER")
     if "subtitles" not in cols:
         conn.execute("ALTER TABLE episodes ADD COLUMN subtitles TEXT")
+    for col, kind in (("published_at", "INTEGER"), ("sponsor_state", "TEXT"), ("sponsor_removed", "INTEGER"),
+                      ("sponsor_segments", "TEXT")):
+        if col not in cols:
+            conn.execute(f"ALTER TABLE episodes ADD COLUMN {col} {kind}")
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(shows)")}
     if "video_copy" not in cols:
         conn.execute("ALTER TABLE shows ADD COLUMN video_copy INTEGER NOT NULL DEFAULT 0")
+    if "skip_sponsors" not in cols:
+        conn.execute("ALTER TABLE shows ADD COLUMN skip_sponsors INTEGER NOT NULL DEFAULT 0")
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(feed_items)")}
     if "next_try" not in cols:
         conn.execute("ALTER TABLE feed_items ADD COLUMN next_try INTEGER NOT NULL DEFAULT 0")

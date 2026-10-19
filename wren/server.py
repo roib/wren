@@ -160,6 +160,7 @@ class ShowUpdate(BaseModel):
     title_filter: str | None = None
     enabled: bool | None = None
     video_copy: bool | None = None
+    skip_sponsors: bool | None = None
 
 
 @app.get("/api/shows")
@@ -324,7 +325,8 @@ def _feed_response(xml: str) -> Response:
 def _show_feed(show: dict, request: Request, video: bool = False) -> Response:
     """The show's episodes in its own format, or (video=True) its video copies."""
     mode = "video" if video else show["mode"]
-    eps = [ep for ep in db.list_episodes() if ep["show_id"] == show["id"] and ep["mode"] == mode]
+    eps = [ep for ep in db.list_episodes() if ep["show_id"] == show["id"] and ep["mode"] == mode
+           and ep["sponsor_state"] != "pending"]  # held back until its sponsor reads are cut
     title = f"{show['name']} (video)" if video and show["mode"] == "audio" else show["name"]
     base = _base_url(request)
     return _feed_response(podcast.render(
@@ -336,7 +338,7 @@ def _show_feed(show: dict, request: Request, video: bool = False) -> Response:
 def singles_feed(request: Request):
     """Episodes added one at a time, plus those left from removed subscriptions."""
     shows = {s["id"] for s in subscriptions.list_shows()}
-    eps = [ep for ep in db.list_episodes() if ep["show_id"] not in shows]
+    eps = [ep for ep in db.list_episodes() if ep["show_id"] not in shows and ep["sponsor_state"] != "pending"]
     base = _base_url(request)
     artwork.ensure_singles_art()
     return _feed_response(podcast.render(

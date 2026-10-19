@@ -131,11 +131,12 @@ def _thumb_file(video_id: str) -> Path | None:
 
 
 def download(url: str, mode: str = "audio", show_id: int | None = None,
-             min_duration: int = 0) -> dict:
+             min_duration: int = 0, hold_for_sponsors: bool = False) -> dict:
     """Download one video and add it to the library.
 
     Raises Skipped (before downloading anything) if it's live, upcoming, or
-    shorter than `min_duration` seconds.
+    shorter than `min_duration` seconds. With hold_for_sponsors, the episode
+    stays out of the feeds until sponsors.process_next() has cut its sponsor reads.
     """
     if mode not in ("audio", "video"):
         raise ValueError("mode must be 'audio' or 'video'")
@@ -168,6 +169,9 @@ def download(url: str, mode: str = "audio", show_id: int | None = None,
         "channel": info.get("channel") or info.get("uploader"),
         "duration": int(info["duration"]) if info.get("duration") else None,
         "upload_date": info.get("upload_date"),
+        # Premieres and past livestreams count from when they aired.
+        "published_at": info.get("release_timestamp") or info.get("timestamp"),
+        "sponsor_state": "pending" if hold_for_sponsors else None,
         "description": info.get("description"),
         "source_url": info.get("webpage_url") or url,
         "file": media.relative_to(MEDIA_DIR).as_posix(),

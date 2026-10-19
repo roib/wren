@@ -1,6 +1,7 @@
 """Read models for the management app: everything about the shows, their
 episodes and the downloader's state, gathered for the API."""
 
+import json
 import re
 import shutil
 import time
@@ -8,7 +9,7 @@ import urllib.parse
 
 import yt_dlp
 
-from . import artwork, db, feeds, podcast, subscriptions, ytdl
+from . import artwork, db, feeds, podcast, sponsors, subscriptions, ytdl
 from .config import MEDIA_DIR
 
 
@@ -113,6 +114,7 @@ def _entries_from_episodes(rows: list[dict]) -> list[dict]:
             "source_url": r["source_url"],
             "state": "downloaded",
             "copies": [],
+            "sponsors": None,
         })
         e["copies"].append({
             "mode": r["mode"],
@@ -122,6 +124,12 @@ def _entries_from_episodes(rows: list[dict]) -> list[dict]:
             "subs_url": _media(r["subtitles"]),
         })
         e["thumb_url"] = e["thumb_url"] or _media(r["thumb"])
+        if r["sponsor_state"] == "pending":
+            # Held back from the feeds until its sponsor reads are cut (sponsors.py).
+            e["sponsors"] = {"state": "pending", "ready_at": sponsors.ready_at(r)}
+        elif r["sponsor_state"] == "done" and (e.get("sponsors") or {}).get("state") != "pending":
+            e["sponsors"] = {"state": "done", "removed": r["sponsor_removed"] or 0,
+                             "count": len(json.loads(r["sponsor_segments"] or "[]"))}
     for e in by_id.values():
         e["copies"].sort(key=lambda c: c["mode"])  # audio before video
     return sorted(by_id.values(), key=lambda e: (e["upload_date"] or "", e["added_at"]), reverse=True)

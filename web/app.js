@@ -90,7 +90,7 @@ function fmtWhen(ts) {
 // "today at 7:42 AM", "Sun, Oct 19 at 7:42 AM": in a sentence.
 function fmtWhenLong(ts) {
   const days = daysAgo(ts);
-  const day = days === 0 ? "today" : days === 1 ? "yesterday"
+  const day = days === 0 ? "today" : days === 1 ? "yesterday" : days === -1 ? "tomorrow"
     : new Date(ts * 1000).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric",
       ...(new Date(ts * 1000).getFullYear() === new Date().getFullYear() ? {} : { year: "numeric" }) });
   return `${day} at ${fmtClock(ts)}`;
@@ -441,6 +441,7 @@ function workerLine(data) {
   let busy = false;
   if (w.paused_until) text = `Paused · YouTube is rate-limiting until ${fmtClock(w.paused_until)}`;
   else if (w.activity === "checking shows") { text = "Checking for new episodes…"; busy = true; }
+  else if (w.activity === "removing sponsor reads") { text = "Removing sponsor reads…"; busy = true; }
   else if (downloading) { text = `Downloading “${downloading.title}”`; busy = true; }
   else if (w.activity === "downloading") { text = "Downloading…"; busy = true; }
   else if (queued && !w.active_now && !w.override) text = `${queued} queued · downloads resume ${fmtClock(w.resume_at)}`;
@@ -641,7 +642,8 @@ function episodeRow(e, { withShow = false, when = fmtWhen } = {}) {
         h("span", { class: "ep-title" }, e.title),
         h("span", { class: "ep-meta" },
           h("span", { class: "badges" }, e.copies.map((c) => badge(c.mode)),
-            e.copy_pending ? h("span", { class: "badge muted" }, "Video soon") : null),
+            e.copy_pending ? h("span", { class: "badge muted" }, "Video soon") : null,
+            e.sponsors?.state === "pending" ? h("span", { class: "badge muted" }, "Not in feed yet") : null),
           withShow
             ? h("span", {}, `${e.show} · `, h("span", { class: "when" }, icon("download"), when(e.added_at)),
               [fmtDuration(e.duration), fmtBytes(size)].filter(Boolean).map((x) => ` · ${x}`).join(""))
@@ -668,7 +670,17 @@ function downloadedLines(e) {
   const lines = [e.upload_date ? `Published ${fmtDate(e.upload_date)}` : null];
   if (same) lines.push(`Downloaded ${fmtWhenLong(times[0])}`);
   else for (const c of e.copies) lines.push(`${c.mode === "video" ? "Video" : "Audio"} downloaded ${fmtWhenLong(c.added_at)}`);
+  lines.push(sponsorLine(e.sponsors));
   return lines.filter(Boolean).flatMap((line, i) => (i ? [h("br"), line] : [line]));
+}
+
+function sponsorLine(sp) {
+  if (!sp) return null;
+  if (sp.state === "pending") return `Waiting for sponsor marks · goes into the feed ${fmtWhenLong(sp.ready_at)}`;
+  if (!sp.removed) return "No sponsor reads were marked";
+  const m = Math.floor(sp.removed / 60);
+  const sec = String(sp.removed % 60).padStart(2, "0");
+  return `Removed ${plural(sp.count || 1, "sponsor read")} · ${m}:${sec}`;
 }
 
 // Two taps: the first turns the button into "Tap again to delete" for a few seconds.
@@ -697,7 +709,7 @@ function showView(d) {
     s.last_error ? banner(friendlyError(s.last_error)) : null,
     showHero(s),
     ...entrySections(d.entries, { showId: s.id, onRetry: (e) => requeue(s, e) }),
-    settingsCard(s));
+    settingsCard(s, d.worker));
 }
 
 async function requeue(s, e) {
@@ -746,7 +758,7 @@ function select(options, value, onchange) {
     all.map(([v, text]) => h("option", { value: String(v), selected: v === value }, text)));
 }
 
-function settingsCard(s) {
+function settingsCard(s, w) {
   const confirming = confirmingRemove === s.id;
   return section("Settings", h("div", { class: "settings card" },
     settingRow("Format", h("div", { class: "segmented small", role: "radiogroup", "aria-label": "Format" },
@@ -761,6 +773,10 @@ function settingsCard(s) {
       toggle(!!s.video_copy, (on) => patchShow(s, { video_copy: on },
         on ? `Downloading ${s.name} as video too` : "Video copies off"), "Also download video"),
       "Adds a separate video feed alongside the audio one.") : null,
+    settingRow("Remove sponsor reads", toggle(!!s.skip_sponsors, (on) => patchShow(s, { skip_sponsors: on },
+      on ? "Sponsor reads will be removed from new episodes" : "Sponsor reads kept"), "Remove sponsor reads"),
+      `New episodes wait until ${w.sponsor_delay_hours} hours after they're published, then the sponsor reads `
+      + "SponsorBlock users marked are cut out. Episodes already downloaded stay as they are."),
     settingRow("Check for new episodes", toggle(!!s.enabled, (on) => patchShow(s, { enabled: on },
       on ? `Checking ${s.name} again` : `Paused ${s.name}`), "Check for new episodes")),
     settingRow("Keep", select(KEEP_OPTIONS, s.keep_last, (v) => patchShow(s, { keep_last: v }, "Saved"))),

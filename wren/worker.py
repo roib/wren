@@ -24,9 +24,9 @@ from pathlib import Path
 
 import yt_dlp
 
-from . import db, downloader, push, subscriptions
+from . import db, downloader, push, sponsors, subscriptions
 from .config import (ACTIVE_HOURS, BLOCK_PAUSE_MINUTES, MAX_DOWNLOADS_PER_HOUR, MEDIA_DIR,
-                     POLL_JITTER_MINUTES, POLL_MINUTES, TIMEZONE)
+                     POLL_JITTER_MINUTES, POLL_MINUTES, SPONSOR_DELAY_HOURS, TIMEZONE)
 
 log = logging.getLogger("wren")
 
@@ -242,6 +242,7 @@ class Worker:
             "next_poll": int(self.next_poll),
             "poll_minutes": POLL_MINUTES,
             "active_hours": list(ACTIVE_HOURS),
+            "sponsor_delay_hours": SPONSOR_DELAY_HOURS,
             "timezone": TIMEZONE.key,
             "active_now": is_active(now),
             "resume_at": int(next_active(now)),
@@ -290,6 +291,11 @@ class Worker:
                 subscriptions.check_feeds(sorted(requested))
             if due:
                 self._schedule_next_poll()
+            return True
+
+        # Cutting sponsor reads doesn't touch YouTube: any hour, even while paused.
+        self.activity = "removing sponsor reads"
+        if sponsors.process_next(now):
             return True
 
         if now < self.paused_until:

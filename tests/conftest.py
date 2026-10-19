@@ -92,8 +92,9 @@ class FakeDownloader:
         self.calls: list[tuple[str, str]] = []
         self.fail: dict[str, Exception] = {}
         self.upload_dates: dict[str, str] = {}
+        self.published: dict[str, int] = {}  # exact publish times; none by default
 
-    def download(self, url, mode="audio", show_id=None, min_duration=None):
+    def download(self, url, mode="audio", show_id=None, min_duration=None, hold_for_sponsors=False):
         vid = urllib.parse.parse_qs(urllib.parse.urlparse(url).query).get("v", [url])[0]
         self.calls.append((vid, mode))
         if vid in self.fail:
@@ -104,7 +105,8 @@ class FakeDownloader:
         ep = {"video_id": vid, "mode": mode, "title": f"Episode {vid}", "channel": "Test Channel",
               "duration": 600, "upload_date": self.upload_dates.get(vid, "20260101"),
               "description": None, "source_url": url, "file": f"{vid}.{ext}", "thumb": f"{vid}.jpg",
-              "show_id": show_id}
+              "show_id": show_id, "published_at": self.published.get(vid),
+              "sponsor_state": "pending" if hold_for_sponsors else None}
         db.upsert_episode(ep)
         return ep
 

@@ -96,7 +96,7 @@ def subscribe(url: str, mode: str = "audio", keep_last: int = 10, backfill: int 
     return show
 
 
-EDITABLE = {"name", "mode", "keep_last", "min_duration", "title_filter", "enabled", "video_copy"}
+EDITABLE = {"name", "mode", "keep_last", "min_duration", "title_filter", "enabled", "video_copy", "skip_sponsors"}
 
 
 def update_show(show_id: int, **fields) -> dict:
@@ -107,7 +107,7 @@ def update_show(show_id: int, **fields) -> dict:
     if "mode" in fields and fields["mode"] not in ("audio", "video"):
         raise ValueError("mode must be 'audio' or 'video'")
     _check_regex(fields.get("title_filter"))
-    for flag in ("enabled", "video_copy"):
+    for flag in ("enabled", "video_copy", "skip_sponsors"):
         if flag in fields:
             fields[flag] = int(bool(fields[flag]))
     if fields:
@@ -257,7 +257,7 @@ def _try_download(show: dict, item: dict) -> bool:
     log.info("%s: downloading %s", show["name"], item["title"])
     try:
         downloader.download(item["url"], show["mode"], show_id=show["id"],
-                            min_duration=show["min_duration"])
+                            min_duration=show["min_duration"], hold_for_sponsors=bool(show["skip_sponsors"]))
     except downloader.Skipped as e:
         if str(e) == "upcoming":
             # Premiere hasn't aired yet; keep it queued and look again later.
@@ -382,7 +382,8 @@ def download_next_copy(show_ids: list[int] | None = None) -> bool:
     show, ep = found
     log.info("%s: downloading video copy of %s", show["name"], ep["title"])
     try:
-        downloader.download(ep["source_url"], "video", show_id=show["id"])
+        downloader.download(ep["source_url"], "video", show_id=show["id"],
+                            hold_for_sponsors=bool(show["skip_sponsors"]))
     except downloader.RateLimited:
         raise
     except downloader.Unavailable as e:

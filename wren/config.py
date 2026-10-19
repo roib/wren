@@ -40,6 +40,12 @@ DOWNLOAD_PAUSE = _range(os.environ.get("WREN_DOWNLOAD_PAUSE", "60-120"))
 MAX_DOWNLOADS_PER_HOUR = int(os.environ.get("WREN_MAX_DOWNLOADS_PER_HOUR", "6"))
 BLOCK_PAUSE_MINUTES = int(os.environ.get("WREN_BLOCK_PAUSE_MINUTES", "120"))
 
+# Shows set to remove sponsor reads hold each new episode back until this many
+# hours after YouTube published it, so SponsorBlock's community marks are in
+# (in a survey of popular shows, all were within about 6 hours), then cut them
+# out once.
+SPONSOR_DELAY_HOURS = float(os.environ.get("WREN_SPONSOR_DELAY_HOURS", "8"))
+
 # Set WREN_WORKER=0 to run the server without background downloads/polling.
 WORKER_ENABLED = os.environ.get("WREN_WORKER", "1") != "0"
 # Optional Netscape-format cookies file for yt-dlp, if YouTube starts asking
