@@ -14,6 +14,11 @@
   --radius: 14px;
   --scroll-thumb: rgba(0, 0, 0, 0.18);
   --scroll-thumb-hover: rgba(0, 0, 0, 0.32);
+  /* Scroll bar arrows: images, as scroll bar buttons can't take a color. */
+  --scroll-up: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 11 11'%3E%3Cpath d='M5.5 3.5 8.5 7.5H2.5Z' fill='rgb(0,0,0)' fill-opacity='.4'/%3E%3C/svg%3E");
+  --scroll-down: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 11 11'%3E%3Cpath d='M5.5 7.5 2.5 3.5H8.5Z' fill='rgb(0,0,0)' fill-opacity='.4'/%3E%3C/svg%3E");
+  --scroll-left: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 11 11'%3E%3Cpath d='M3.5 5.5 7.5 2.5V8.5Z' fill='rgb(0,0,0)' fill-opacity='.4'/%3E%3C/svg%3E");
+  --scroll-right: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 11 11'%3E%3Cpath d='M7.5 5.5 3.5 8.5V2.5Z' fill='rgb(0,0,0)' fill-opacity='.4'/%3E%3C/svg%3E");
   color-scheme: light;
 }
 
@@ -33,6 +38,10 @@
     --shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
     --scroll-thumb: rgba(255, 255, 255, 0.2);
     --scroll-thumb-hover: rgba(255, 255, 255, 0.13); /* darker on hover */
+    --scroll-up: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 11 11'%3E%3Cpath d='M5.5 3.5 8.5 7.5H2.5Z' fill='rgb(255,255,255)' fill-opacity='.4'/%3E%3C/svg%3E");
+    --scroll-down: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 11 11'%3E%3Cpath d='M5.5 7.5 2.5 3.5H8.5Z' fill='rgb(255,255,255)' fill-opacity='.4'/%3E%3C/svg%3E");
+    --scroll-left: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 11 11'%3E%3Cpath d='M3.5 5.5 7.5 2.5V8.5Z' fill='rgb(255,255,255)' fill-opacity='.4'/%3E%3C/svg%3E");
+    --scroll-right: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 11 11'%3E%3Cpath d='M7.5 5.5 3.5 8.5V2.5Z' fill='rgb(255,255,255)' fill-opacity='.4'/%3E%3C/svg%3E");
     color-scheme: dark;
   }
 }
@@ -51,6 +60,14 @@
 ::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 11px; border: 2px solid transparent; background-clip: padding-box; }
 ::-webkit-scrollbar-thumb:hover { background-color: var(--scroll-thumb-hover); }
 ::-webkit-scrollbar-corner { background: transparent; }
+/* One arrow at each end, as on classic desktop scroll bars. */
+::-webkit-scrollbar-button:single-button { display: block; width: 11px; height: 11px;
+  background: center / 11px no-repeat; border-radius: 3px; }
+::-webkit-scrollbar-button:single-button:hover { background-color: var(--line); }
+::-webkit-scrollbar-button:single-button:vertical:decrement { background-image: var(--scroll-up); }
+::-webkit-scrollbar-button:single-button:vertical:increment { background-image: var(--scroll-down); }
+::-webkit-scrollbar-button:single-button:horizontal:decrement { background-image: var(--scroll-left); }
+::-webkit-scrollbar-button:single-button:horizontal:increment { background-image: var(--scroll-right); }
 [hidden] { display: none !important; }
 
 /* Feel like an app on iPhone: no pinch/double-tap zoom, no rubber-band
