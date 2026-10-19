@@ -31,16 +31,21 @@
     --ok: #4cc38a;
     --warn: #f0a24b;
     --shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-    --scroll-thumb: rgba(255, 255, 255, 0.12);
-    --scroll-thumb-hover: rgba(255, 255, 255, 0.24);
+    --scroll-thumb: rgba(255, 255, 255, 0.2);
+    --scroll-thumb-hover: rgba(255, 255, 255, 0.13); /* darker on hover */
     color-scheme: dark;
   }
 }
 
 * { box-sizing: border-box; }
 
-/* Thin, dim scroll bars on every scrolling area (desktop; phones overlay their own). */
-* { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; }
+/* Thin, dim scroll bars on every scrolling area (desktop; phones overlay their own).
+   Chrome and Safari use the ::-webkit-scrollbar rules, which allow a hover color;
+   setting scrollbar-width/-color would make Chrome ignore them and pick its own
+   hover shade, so those are only for browsers without them (Firefox). */
+@supports not selector(::-webkit-scrollbar) {
+  * { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; }
+}
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
