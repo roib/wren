@@ -174,7 +174,8 @@ def singles_detail() -> dict:
         "error": j["error"],
         "first_seen": j["created_at"],
     } for j in jobs]
-    return {"entries": pending + _entries_from_episodes(rows)}
+    artwork.ensure_singles_art()
+    return {"art_url": _art_url(artwork.singles_path()), "entries": pending + _entries_from_episodes(rows)}
 
 
 # ---- resolving a pasted link --------------------------------------------------------

@@ -742,7 +742,7 @@ function singlesView(d) {
   return h("div", {},
     h("div", { class: "hero card" },
       h("div", { class: "hero-top" },
-        art(overview?.singles.art_url ?? "/media/shows/singles.jpg", "hero-art"),
+        art(d.art_url, "hero-art"),
         h("div", { class: "hero-info" },
           h("div", { class: "hero-meta" }, "Episodes added one at a time, and those left from removed shows."))),
       feedButtons("/feeds/singles.xml", "Open in Podcasts")),

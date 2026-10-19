@@ -75,7 +75,10 @@ def open_app(browser, base_url, device):
     page = ctx.new_page()
     page.errors = []
     page.on("pageerror", lambda e: page.errors.append(str(e)))
-    page.on("console", lambda m: m.type == "error" and page.errors.append(m.text))
+    # Failed requests are listed by URL; the console's own message doesn't name them.
+    page.on("console", lambda m: m.type == "error" and not m.text.startswith("Failed to load resource")
+            and page.errors.append(m.text))
+    page.on("response", lambda r: r.status >= 400 and page.errors.append(f"HTTP {r.status}: {r.url}"))
     return page
 
 

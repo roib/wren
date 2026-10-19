@@ -4,6 +4,7 @@ import io
 import logging
 import re
 import urllib.request
+import uuid
 
 import yt_dlp
 from PIL import Image, ImageFilter
@@ -91,7 +92,8 @@ def _badge(art: Image.Image) -> Image.Image:
 
 def _save(img: Image.Image, path) -> None:
     ART_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
+    # A temp file of its own: two requests can make the same artwork at once.
+    tmp = path.with_name(f"{path.stem}.{uuid.uuid4().hex}.tmp")
     img.save(tmp, "JPEG", quality=88)
     tmp.replace(path)
 

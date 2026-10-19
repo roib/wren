@@ -90,6 +90,13 @@ def test_show_feeds(client, show):
     assert client.get("/feeds/show/999.xml").status_code == 404
 
 
+def test_singles_art_is_ready_on_first_load(client):
+    # The singles page may be opened before anything else has made the artwork.
+    art = client.get("/api/singles").json()["art_url"]
+    assert art.startswith("/media/shows/singles.jpg?v=")
+    assert client.get(art).status_code == 200
+
+
 def test_singles_feed(client, fake_downloader):
     fake_downloader.download("https://www.youtube.com/watch?v=s1")
     ch = ET.fromstring(client.get("/feeds/singles.xml").text).find("channel")
