@@ -28,7 +28,7 @@ POLL_JITTER_MINUTES = 15
 
 # Automatic checks and subscription downloads only happen during these hours
 # (start inclusive, end exclusive; "22-6" wraps past midnight; "0-24" is always).
-ACTIVE_HOURS = _range(os.environ.get("WREN_ACTIVE_HOURS", "7-23"))
+ACTIVE_HOURS = _range(os.environ.get("WREN_ACTIVE_HOURS", "5-23"))
 try:
     TIMEZONE = ZoneInfo(os.environ.get("WREN_TZ") or "America/Los_Angeles")
 except ZoneInfoNotFoundError:

@@ -157,7 +157,7 @@ Wren is configured with environment variables:
 |---|---|---|
 | `WREN_DATA` | `./data` (`/data` in the container) | Database, media, artwork and the push key |
 | `WREN_TZ` | `America/Los_Angeles` | Time zone for active hours |
-| `WREN_ACTIVE_HOURS` | `7-23` | Hours when shows are checked and downloaded (`22-6` wraps past midnight, `0-24` is always) |
+| `WREN_ACTIVE_HOURS` | `5-23` | Hours when shows are checked and downloaded (`22-6` wraps past midnight, `0-24` is always) |
 | `WREN_POLL_MINUTES` | `120` | How often shows are checked (±15 min) |
 | `WREN_DOWNLOAD_PAUSE` | `60-120` | Random pause between downloads, in seconds |
 | `WREN_MAX_DOWNLOADS_PER_HOUR` | `6` | Cap on subscription downloads per hour |
