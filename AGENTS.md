@@ -30,6 +30,7 @@ three-pane desktop layout.
 | `wren/cli.py` | `wren serve / subscribe / shows / sync / add / list / unsubscribe` |
 | `web/` | The app: `index.html`, `app.js`, `style.css`, `sw.js` (push only), icons. No build step, no framework |
 | `start.sh` | Container entrypoint: installs the newest yt-dlp into `/tmp/ytdlp`, then `wren serve` |
+| `tests/` | pytest suite; `conftest.py` fakes YouTube listings, downloads and push, so it runs offline |
 | `docs/screenshots/` | README screenshots (made-up sample data only) |
 
 ## Conventions
@@ -82,15 +83,19 @@ three-pane desktop layout.
 ## Running and testing locally
 
 ```sh
-python -m venv .venv && .venv/bin/pip install -e .
+python -m venv .venv && .venv/bin/pip install -e '.[test]'
+.venv/bin/pytest
 WREN_DATA=/tmp/wren-test WREN_WORKER=0 .venv/bin/wren serve --host 127.0.0.1 --port 8016
 ```
 
+- `pytest` covers the back end (feeds, subscriptions, retention, alerts, the
+  worker's job handling, the API) against a temp `WREN_DATA`, with YouTube,
+  downloads and push faked in `tests/conftest.py`. It never touches the network;
+  keep it that way. Add tests with back-end changes.
 - `WREN_WORKER=0` stops background checks and downloads; use a throwaway
   `WREN_DATA` (never the owner's data).
-- There's no test suite; verify with small Python scripts against the modules
-  (with a temp `WREN_DATA`), `curl` against the API, and the browser at phone
-  width (390×844) and desktop width. Headless screenshots:
+- The front end has no tests: check it with `curl` against the API and the
+  browser at phone width (390×844) and desktop width. Headless screenshots:
   `chromium --headless=new --force-dark-mode --window-size=390,844
   --force-device-scale-factor=3 --virtual-time-budget=5000 --screenshot=out.png URL`.
 - Screenshots for the README use made-up shows and generated artwork, never the
