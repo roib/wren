@@ -78,6 +78,11 @@ def singles():
     return {**admin.singles_detail(), "worker": background.status()}
 
 
+@app.get("/api/recent")
+def recent():
+    return {"entries": admin.recent(), "worker": background.status()}
+
+
 class ResolveRequest(BaseModel):
     url: str
 

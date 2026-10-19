@@ -4,7 +4,7 @@ import pytest
 from conftest import item
 from fastapi.testclient import TestClient
 
-from wren import push, server, subscriptions
+from wren import db, push, server, subscriptions
 
 SHOW = "https://www.youtube.com/playlist?list=UUtest"
 
@@ -95,6 +95,26 @@ def test_singles_art_is_ready_on_first_load(client):
     art = client.get("/api/singles").json()["art_url"]
     assert art.startswith("/media/shows/singles.jpg?v=")
     assert client.get(art).status_code == 200
+
+
+def test_recent_downloads(client, show, fake_downloader):
+    fake_downloader.download("https://www.youtube.com/watch?v=s1")  # a single
+    fake_downloader.download("https://www.youtube.com/watch?v=e1", "video", show_id=show["id"])
+    with db.connect() as conn:
+        for vid, mode, when in (("e1", "audio", 100), ("e2", "audio", 300), ("s1", "audio", 200),
+                                ("e1", "video", 400)):
+            conn.execute("UPDATE episodes SET added_at = ? WHERE video_id = ? AND mode = ?", (when, vid, mode))
+    entries = client.get("/api/recent").json()["entries"]
+    # Newest download first; the video copy of e1 brings it to the top.
+    assert [(e["video_id"], e["show"], e["show_id"]) for e in entries] == [
+        ("e1", "Test Show", show["id"]), ("e2", "Test Show", show["id"]), ("s1", "Single episodes", None)]
+    assert [c["mode"] for c in entries[0]["copies"]] == ["audio", "video"]
+    overview = client.get("/api/overview").json()
+    assert [e["video_id"] for e in overview["recent"]] == ["e1", "e2", "s1"]
+    assert overview["recent_count"] == 0  # all "downloaded" long ago
+    with db.connect() as conn:
+        conn.execute("UPDATE episodes SET added_at = strftime('%s') WHERE video_id = 'e2'")
+    assert client.get("/api/overview").json()["recent_count"] == 1
 
 
 def test_singles_feed(client, fake_downloader):

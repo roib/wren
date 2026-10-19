@@ -528,6 +528,7 @@ main { margin-top: 16px; }
 .setting-main { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 32px; }
 .setting-label { font-size: 15px; }
 .setting-hint { margin: 6px 0 0; color: var(--muted); font-size: 13px; line-height: 1.4; }
+.page-note { margin: 14px 4px 0; color: var(--muted); font-size: 13px; line-height: 1.4; }
 
 .switch {
   position: relative;

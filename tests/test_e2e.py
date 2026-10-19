@@ -113,6 +113,7 @@ def title(page):
 @pytest.mark.parametrize("hash, heading", [
     ("#/", "Shows"), ("#/add", "Add"), ("#/alerts", "Alerts"), ("#/status", "Status"),
     ("#/singles", "Single episodes"),
+    ("#/recent", "Recent downloads"),
 ])
 @pytest.mark.parametrize("size", ["phone", "desktop"])
 def test_pages_render(request, size, hash, heading):
@@ -170,3 +171,15 @@ def test_desktop_panes(desktop, show):
     playwright.expect(title(desktop)).to_have_text("Test Show")
     playwright.expect(desktop.locator("#sidebar")).to_be_visible()
     playwright.expect(desktop.locator("#listpane")).to_contain_text("Test Show")
+
+
+def test_recent_downloads(phone, show):
+    phone.goto("/")
+    # The home screen shows the latest few, and leads to the rest.
+    playwright.expect(phone.locator(".section", has_text="Recently downloaded").locator(".ep-title")).to_have_count(2)
+    phone.locator(".see-all").tap()
+    playwright.expect(title(phone)).to_have_text("Recent downloads")
+    playwright.expect(phone.locator(".section h2").first).to_have_text("Today")
+    phone.locator(".ep-head").first.tap()
+    phone.locator(".ep.open").get_by_text("Go to show").tap()
+    playwright.expect(title(phone)).to_have_text("Test Show")

@@ -40,7 +40,7 @@ three-pane desktop layout.
 - **Front end:** vanilla JS with the `h(tag, props, ...children)` helper; pages
   re-render from fetched JSON (`load()` → `render()`), polling faster while busy.
   Icons are inline SVG strings in `ICONS`. Hash routes (`#/show/7`, `#/add`,
-  `#/alerts`, `#/status`, `#/singles`); in-app links replace history entries.
+  `#/alerts`, `#/status`, `#/singles`, `#/recent`); in-app links replace history entries.
 - **Keep the iPhone feel:** the custom fast-tap handler (activate on
   `touchend`, ignore taps that only stop a scroll), push/pop view transitions
   (fade on desktop), scroll memory, the sticky nav title, no zoom/rubber-band on

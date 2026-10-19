@@ -3,6 +3,7 @@ episodes and the downloader's state, gathered for the API."""
 
 import re
 import shutil
+import time
 import urllib.parse
 
 import yt_dlp
@@ -74,6 +75,8 @@ def overview() -> dict:
     show_ids = {s["id"] for s in shows}
     with db.connect() as conn:
         eps = [dict(r) for r in conn.execute("SELECT show_id, file, subtitles FROM episodes")]
+        recent_count = conn.execute("SELECT COUNT(DISTINCT video_id) FROM episodes WHERE added_at >= ?",
+                                    (int(time.time()) - 86400,)).fetchone()[0]
     singles = [e for e in eps if e["show_id"] not in show_ids]
     disk = shutil.disk_usage(MEDIA_DIR)
     artwork.ensure_singles_art()
@@ -90,6 +93,9 @@ def overview() -> dict:
             "bytes": sum(_size(e["file"]) + _size(e["subtitles"]) for e in eps),
         },
         "disk": {"free": disk.free, "total": disk.total},
+        # The home screen's "Recently downloaded" and the sidebar's count of the last day.
+        "recent": recent(HOME_RECENT, shows),
+        "recent_count": recent_count,
     }
 
 
@@ -176,6 +182,27 @@ def singles_detail() -> dict:
     } for j in jobs]
     artwork.ensure_singles_art()
     return {"art_url": _art_url(artwork.singles_path()), "entries": pending + _entries_from_episodes(rows)}
+
+
+RECENT_LIMIT = 50  # episodes on the Recent page
+HOME_RECENT = 3  # and on the home screen
+
+
+def recent(limit: int = RECENT_LIMIT, shows: list[dict] | None = None) -> list[dict]:
+    """The latest downloads across every show and the singles, newest first,
+    each with the show it belongs to. Only what's still on the server: episodes
+    removed by a show's keep-last limit drop out."""
+    names = {s["id"]: s["name"] for s in (shows if shows is not None else subscriptions.list_shows())}
+    with db.connect() as conn:
+        rows = [dict(r) for r in conn.execute("SELECT * FROM episodes ORDER BY added_at DESC")]
+    entries = _entries_from_episodes(rows)
+    show_of = {r["video_id"]: r["show_id"] for r in rows}
+    for e in entries:
+        sid = show_of[e["video_id"]]
+        e["show_id"] = sid if sid in names else None
+        e["show"] = names.get(sid, "Single episodes")
+    # Rows came newest first, so each entry's added_at is its latest copy's.
+    return sorted(entries, key=lambda e: e["added_at"], reverse=True)[:limit]
 
 
 # ---- resolving a pasted link --------------------------------------------------------

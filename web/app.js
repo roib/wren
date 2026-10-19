@@ -176,6 +176,7 @@ function route() {
   let m;
   if ((m = path.match(/^\/show\/(\d+)$/))) return { name: "show", id: Number(m[1]), params };
   if (path === "/singles") return { name: "singles", id: "singles", params };
+  if (path === "/recent") return { name: "recent", id: "recent", params };
   if (path === "/add") return { name: "add", params };
   if (path === "/status") return { name: "status", params };
   if (path === "/alerts") return { name: "alerts", params };
@@ -193,6 +194,7 @@ async function load() {
     const jobs = [];
     if (r.name === "show") jobs.push(api(`/api/shows/${r.id}/detail`).then((d) => details.set(r.id, d)));
     else if (r.name === "singles") jobs.push(api("/api/singles").then((d) => details.set("singles", d)));
+    else if (r.name === "recent") jobs.push(api("/api/recent").then((d) => details.set("recent", d)));
     else if (r.name === "alerts") {
       jobs.push(api("/api/alerts").then(async (a) => { alertList = a; if (!pushState) await loadPushState(); }));
     }
@@ -216,7 +218,7 @@ function schedule() {
   clearTimeout(pollTimer);
   const r = route();
   if (r.name === "add") return;
-  const data = r.name === "show" || r.name === "singles" ? details.get(r.id) : overview;
+  const data = ["show", "singles", "recent"].includes(r.name) ? details.get(r.id) : overview;
   pollTimer = setTimeout(() => {
     if (document.visibilityState === "visible") load();
     else schedule();
@@ -264,6 +266,10 @@ function render() {
     title = "Single episodes";
     const d = details.get("singles");
     body = d ? singlesView(d) : placeholder();
+  } else if (r.name === "recent") {
+    title = "Recent downloads";
+    const d = details.get("recent");
+    body = d ? recentView(d) : placeholder();
   } else if (r.name === "add") {
     title = "Add";
     body = addView(r.params);
@@ -326,6 +332,7 @@ function renderSidebar(r) {
     h("a", { class: "button strong side-add", href: "#/add" }, icon("plus"), "Add show or episode"),
     h("nav", { class: "side-nav", "aria-label": "Wren" },
       navLink("#/", "Shows", "var(--fg)", o?.shows.length, r.name === "show" || r.name === "home"),
+      navLink("#/recent", "Recent", "var(--muted)", o?.recent_count, r.name === "recent"),
       navLink("#/singles", "Single episodes", "var(--faint)", o?.singles.episodes, r.name === "singles"),
       navLink("#/alerts", "Alerts", "var(--warn)", o?.alerts, r.name === "alerts", "alert-count"),
       navLink("#/status", "Status", "var(--ok)", null, r.name === "status")),
@@ -444,6 +451,10 @@ function homeView(data) {
   }) : null;
   return h("div", {},
     statusCard(data),
+    data.recent.length ? section("Recently downloaded", h("ul", { class: "card list-card" },
+      data.recent.map((e) => episodeRow(e, { withShow: true })),
+      h("li", {}, h("a", { class: "row see-all", href: "#/recent" },
+        h("span", { class: "row-text" }, "All recent downloads"), h("span", { class: "chev" }, icon("chevronRight")))))) : null,
     filterBox,
     data.shows.length ? section("Shows", h("ul", { class: "show-list card list-card" }, ...showRows(matching()))) : null,
     data.singles.episodes ? section("Other",
@@ -541,7 +552,7 @@ function entrySections(entries, { showId, onRetry }) {
     progress.length ? section("In progress", h("ul", { class: "card list-card" }, progress.map((e) => pendingRow(e)))) : null,
     failed.length ? section("Failed", h("ul", { class: "card list-card" }, failed.map((e) => pendingRow(e, onRetry)))) : null,
     section("Downloaded", done.length
-      ? h("ul", { class: "card list-card" }, done.map(episodeRow))
+      ? h("ul", { class: "card list-card" }, done.map((e) => episodeRow(e)))
       : h("p", { class: "none card" }, progress.length ? "Nothing downloaded yet." : "No episodes downloaded.")),
     skipped.length ? section(null,
       h("button", {
@@ -579,7 +590,7 @@ function pendingRow(e, onRetry) {
       canRetry ? h("button", { class: "action", onclick: () => onRetry(e) }, e.state === "failed" ? "Retry" : "Download") : null));
 }
 
-function episodeRow(e) {
+function episodeRow(e, { withShow = false } = {}) {
   const open = expanded === e.video_id;
   const size = e.copies.reduce((n, c) => n + c.bytes, 0);
   return h("li", { class: `ep${open ? " open" : ""}` },
@@ -601,13 +612,15 @@ function episodeRow(e) {
         h("span", { class: "ep-meta" },
           h("span", { class: "badges" }, e.copies.map((c) => badge(c.mode)),
             e.copy_pending ? h("span", { class: "badge muted" }, "Video soon") : null),
-          h("span", {}, join(fmtDate(e.upload_date), fmtDuration(e.duration), fmtBytes(size)))))),
+          h("span", {}, join(withShow ? e.show : null, fmtDate(e.upload_date), fmtDuration(e.duration), fmtBytes(size)))))),
     // Always rendered; collapsed with CSS until the row is open.
     h("div", { class: "collapse" },
       h("div", { class: "collapse-body" },
         h("div", { class: "ep-actions" },
           e.copies.map((c) => h("button", { class: "action", onclick: () => openPlayer(e, c) },
             icon("play"), c.mode === "video" ? "Play video" : "Play audio")),
+          withShow ? h("a", { class: "action subtle", href: e.show_id ? `#/show/${e.show_id}` : "#/singles" },
+            icon("chevronRight"), "Go to show") : null,
           h("a", { class: "action subtle", href: e.source_url, target: "_blank", rel: "noopener" },
             icon("external"), "YouTube"),
           h("button", { class: "action subtle danger", onclick: (ev) => deleteEpisode(e, ev.currentTarget) },
@@ -757,6 +770,32 @@ async function retryJob(e) {
     toast(`Couldn't retry: ${err.message}`);
   }
   load();
+}
+
+// ---- recent downloads -----------------------------------------------------------
+
+// "Today", "Yesterday", or the date, for when an episode was downloaded.
+function dayLabel(ts) {
+  const d = new Date(ts * 1000);
+  const days = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(d).setHours(0, 0, 0, 0)) / 86400000);
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", ...(sameYear ? {} : { year: "numeric" }) });
+}
+
+function recentView(d) {
+  if (!d.entries.length) return h("p", { class: "none card" }, "Nothing downloaded yet.");
+  const days = new Map();
+  for (const e of d.entries) {
+    const day = dayLabel(e.added_at);
+    if (!days.has(day)) days.set(day, []);
+    days.get(day).push(e);
+  }
+  return h("div", {},
+    [...days].map(([day, entries]) => section(day,
+      h("ul", { class: "card list-card" }, entries.map((e) => episodeRow(e, { withShow: true }))))),
+    h("p", { class: "page-note" }, "Episodes removed to keep a show's latest few no longer appear here."));
 }
 
 // ---- add ------------------------------------------------------------------------
