@@ -133,3 +133,30 @@ def test_books_folder_and_api(book):
     assert (show["kind"], show["name"]) == ("book", "Single File Book")
     assert client.get("/api/books").json()["books"][0]["added"] == {"id": show["id"], "name": "Single File Book"}
     assert client.post("/api/shows", json={"url": "book:Single.m4b"}).status_code == 400  # already added
+
+
+def test_parts_that_each_number_their_chapters(book):
+    make_part(BOOKS_DIR / "Saga" / "Saga (Part 1 of 2).m4b", 4, [(0, 2, "Part 01"), (2, 4, "Part 02")],
+              title="Saga 1: The Start 1 of 2")
+    make_part(BOOKS_DIR / "Saga" / "Saga (Part 2 of 2).m4b", 4, [(0, 2, "Part 01"), (2, 4, "Part 02")],
+              title="Saga 1: The Start 2 of 2")
+    b = books.read("book:Saga")
+    assert b["title"] == "Saga 1: The Start"
+    assert [c.title for c in b["chapters"]] == ["Part 1", "Part 2", "Part 3", "Part 4"]
+
+
+@pytest.mark.parametrize("tag, title", [("Red Rising 1 of 2", "Red Rising"), ("Dune (Part 2 of 3)", "Dune"),
+                                        ("Dune, Part 2", "Dune"), ("Catch-22", "Catch-22"), ("1984", "1984")])
+def test_book_title_without_its_part(tag, title):
+    assert books._book_title(tag) == title
+
+
+def test_reading_again_renames_chapters(book, monkeypatch):
+    show = subscriptions.subscribe(book)
+    while subscriptions.download_next():
+        pass
+    real = books.read
+    monkeypatch.setattr(books, "read", lambda s: {**(b := real(s)), "chapters": [
+        books.Chapter(c.number, c.title.upper(), c.part, c.start, c.end) for c in b["chapters"]]})
+    subscriptions.check_feeds([show["id"]])
+    assert [e["title"] for e in chapters(show["id"])] == ["OPENING CREDITS", "CHAPTER ONE", "PART 2"]

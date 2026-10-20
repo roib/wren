@@ -89,6 +89,7 @@ class Chapter:
     part: str  # the file, relative to the books folder
     start: float
     end: float
+    marked: bool = True  # from a chapter mark (not the whole file)
 
 
 def _probe(path: Path) -> dict:
@@ -101,6 +102,29 @@ def _probe(path: Path) -> dict:
 
 def _tags(info: dict) -> dict:
     return {k.lower(): v for k, v in (info.get("format", {}).get("tags") or {}).items()}
+
+
+# "… 1 of 2", "… (Part 1 of 2)", "… Part 1": which file of the book this is.
+PART_SUFFIX = re.compile(r"[\s,:;\-–(\[]*(?:part|pt\.?|disc|disk)?\s*\d+\s*(?:of|/)\s*\d+[)\]]?$"
+                         r"|[\s,:;\-–(\[]+(?:part|pt\.?|disc|disk)\s*\d+[)\]]?$", re.I)
+# Chapter names that are only a number ("Part 01", "Chapter 3", "Track 12", "07").
+NUMBERED = re.compile(r"^(part|chapter|track|disc|disk)?[\s._-]*0*(\d+)$", re.I)
+
+
+def _book_title(tag: str) -> str:
+    return PART_SUFFIX.sub("", tag).strip() or tag
+
+
+def _renumber(chapters: list["Chapter"]) -> None:
+    """Parts of a book often each number their chapters from 1 ("Part 01" in
+    both files): number those on through the whole book instead. (Only names
+    from chapter marks; a part without marks is named after its file.)"""
+    n = 0
+    for ch in chapters:
+        m = NUMBERED.match(ch.title) if ch.marked else None
+        if m:
+            n += 1
+            ch.title = f"{(m.group(1) or 'Chapter').capitalize()} {n}"
 
 
 def read(source: str) -> dict:
@@ -119,6 +143,7 @@ def read(source: str) -> dict:
         rel = part.relative_to(root).as_posix()
         marks = [(float(c["start_time"]), float(c["end_time"]), (c.get("tags") or {}).get("title"))
                  for c in info.get("chapters") or []]
+        marked = bool(marks)
         if not marks:  # the whole part is one chapter
             length = float(info.get("format", {}).get("duration") or 0)
             marks = [(0.0, length, tags.get("title") if len(parts) > 1 else None)]
@@ -127,8 +152,11 @@ def read(source: str) -> dict:
                 continue  # a stray zero-length mark
             n = len(chapters) + 1
             chapters.append(Chapter(n, (name or "").strip() or (part.stem if len(parts) > 1 and len(marks) == 1
-                                                                else f"Chapter {n}"), rel, start, end))
-    return {"title": title or (path.stem if path.is_file() else path.name), "author": author,
+                                                                else f"Chapter {n}"), rel, start, end, marked))
+    if len(parts) > 1:
+        _renumber(chapters)
+    title = title or (path.stem if path.is_file() else path.name)
+    return {"title": _book_title(title) if len(parts) > 1 else title, "author": author,
             "chapters": chapters, "parts": len(parts)}
 
 

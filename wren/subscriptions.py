@@ -262,6 +262,14 @@ def _check_feed(show: dict) -> int:
         seen = {r["item_id"] for r in conn.execute(
             "SELECT item_id FROM feed_items WHERE show_id = ?", (show["id"],))}
         new = [i for i in feed.items if i.item_id not in seen and not _is_pending(i)]
+        if show["kind"] == "book":
+            # How chapters are named can improve; podcast apps pick up a new
+            # title for the same episode.
+            for i in feed.items:
+                if i.item_id in seen:
+                    conn.execute("UPDATE feed_items SET title = ? WHERE show_id = ? AND item_id = ?",
+                                 (i.title, show["id"], i.item_id))
+                    conn.execute("UPDATE episodes SET title = ? WHERE video_id = ?", (i.title, i.item_id))
         # Items recorded before dates were kept get theirs filled in.
         for i in feed.items:
             if i.item_id in seen and i.published:
