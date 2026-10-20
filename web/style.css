@@ -575,6 +575,15 @@ button.row { width: 100%; text-align: left; background: none; border: 0; font: i
 .act-dot.video::after { background: var(--fg); }
 .act-dot:hover::after, .act-dot.picked::after { width: 13px; height: 13px; }
 .act-dot.picked { z-index: 1; }
+/* Downloads that arrived together: one badge with their count, as small as a
+   dot so groups can't run into each other. Hollow, or filled when all video. */
+.act-dot.group::after { display: none; }
+.act-dot.group { display: flex; align-items: center; justify-content: center; }
+.act-dot .count { min-width: 15px; height: 15px; padding: 0 3px; border-radius: 8px; border: 1.5px solid var(--fg);
+  background: var(--surface); color: var(--fg); box-shadow: 0 0 0 2px var(--surface); box-sizing: border-box;
+  font-size: 9px; font-weight: 700; line-height: 12px; text-align: center; font-variant-numeric: tabular-nums; }
+.act-dot.group.video .count { background: var(--fg); color: var(--surface); }
+.act-dot.group:hover .count, .act-dot.group.picked .count { transform: scale(1.2); }
 .act-axis { height: 18px; }
 .act-axis .act-track { border-top: 1px solid var(--line); }
 .act-tick { position: absolute; top: 3px; transform: translateX(-50%); font-size: 11px; color: var(--muted); }

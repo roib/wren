@@ -190,10 +190,13 @@ def test_download_times(phone, show):
     phone.locator(".ep-head").first.tap()
     playwright.expect(phone.locator(".ep.open .ep-when")).to_contain_text("Downloaded today at")
     phone.goto("/#/status")
-    dots = phone.locator(".act-dot")
-    playwright.expect(dots).to_have_count(2)
-    dots.last.tap()  # both finished the same minute; the later one is on top
-    playwright.expect(phone.locator(".act-detail")).to_contain_text("Test Show")
+    # Both finished the same minute: one group of two dots, which lists both.
+    group = phone.locator(".act-dot.group")
+    playwright.expect(group).to_have_count(1)
+    playwright.expect(group.locator(".count")).to_have_text("2")
+    group.tap()
+    playwright.expect(phone.locator(".act-detail")).to_contain_text("2 downloads at")
+    playwright.expect(phone.locator(".act-detail")).to_contain_text("Episode e1")
 
 
 def test_sponsor_cuts_table(phone, show):

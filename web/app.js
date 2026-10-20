@@ -1161,27 +1161,50 @@ function activityChart(a, w) {
   const bands = from === to || (from === 0 && to === 24) ? [[0, 24]] : from < to ? [[from, to]] : [[0, to], [from, 24]];
 
   const detail = h("p", { class: "act-detail", "aria-live": "polite" });
-  const describe = (dl) => {
-    const t = new Date(dl.at * 1000).toLocaleString([], { timeZone: tz, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-    detail.replaceChildren(h("strong", {}, dl.title), h("br"), join(dl.show, dl.mode === "video" ? "Video" : "Audio", t, fmtBytes(dl.bytes)));
+  const when = (ts) => new Date(ts * 1000).toLocaleString([], { timeZone: tz, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  // One download, or a group that arrived together (podcast feeds download back to back).
+  const describe = (group) => {
+    if (group.length === 1) {
+      const dl = group[0];
+      detail.replaceChildren(h("strong", {}, dl.title), h("br"), join(dl.show, dl.mode === "video" ? "Video" : "Audio", when(dl.at), fmtBytes(dl.bytes)));
+      return;
+    }
+    detail.replaceChildren(h("strong", {}, `${group.length} downloads at ${when(group[0].at)}`),
+      ...group.flatMap((dl) => [h("br"), join(dl.title, dl.show, dl.mode === "video" ? "Video" : null)]));
   };
+  const groups = new Map(); // a download log id -> the group it's in
+  // Downloads closer together than this share a spot, so their dots would
+  // cover each other: draw them as one badge with their count.
+  const GROUP_HOURS = 20 / 60;
+  const group = (downloads) => {
+    const out = [];
+    for (const dl of [...downloads].sort((p, q) => p.at - q.at)) {
+      const last = out.at(-1);
+      if (last && (dl.at - last.at(-1).at) / 3600 < GROUP_HOURS) last.push(dl);
+      else out.push([dl]);
+    }
+    for (const g of out) for (const dl of g) groups.set(dl.id, g);
+    return out;
+  };
+  const dayGroups = new Map(days.map((date) => [key(date), group(byDay.get(key(date)))]));
   const picked = a.downloads.find((dl) => dl.id === activityPick);
-  if (picked) describe(picked);
+  if (picked) describe(groups.get(picked.id) || [picked]);
   else detail.textContent = isDesktop() ? "Point at a dot to see what was downloaded." : "Tap a dot to see what was downloaded.";
 
-  const dot = (dl) => h("button", {
+  const dot = (g) => h("button", {
     type: "button",
-    class: `act-dot ${dl.mode}${dl.id === activityPick ? " picked" : ""}`,
-    style: `left: ${pct(zoned(dl.at, tz).hour)}`,
-    "aria-label": `${dl.title}, ${dl.show}, ${fmtClock(dl.at)}`,
+    class: `act-dot ${g.length > 1 ? `group ${g.every((dl) => dl.mode === "video") ? "video" : "audio"}` : g[0].mode}`
+      + (g.some((dl) => dl.id === activityPick) ? " picked" : ""),
+    style: `left: ${pct(zoned(g[0].at, tz).hour + (g.at(-1).at - g[0].at) / 7200)}`,
+    "aria-label": g.length > 1 ? `${g.length} downloads at ${fmtClock(g[0].at)}` : `${g[0].title}, ${g[0].show}, ${fmtClock(g[0].at)}`,
     onclick: (ev) => {
-      activityPick = dl.id;
+      activityPick = g[0].id;
       ev.currentTarget.closest(".act").querySelectorAll(".act-dot.picked").forEach((x) => x.classList.remove("picked"));
       ev.currentTarget.classList.add("picked");
-      describe(dl);
+      describe(g);
     },
-    onmouseenter: () => describe(dl),
-  });
+    onmouseenter: () => describe(g),
+  }, g.length > 1 ? h("span", { class: "count" }, String(g.length)) : null);
 
   const total = a.downloads.length;
   return h("div", { class: "card act" },
@@ -1198,7 +1221,7 @@ function activityChart(a, w) {
           h("span", { class: "act-day" }, label),
           h("div", { class: "act-track" },
             bands.map(([b0, b1]) => h("span", { class: "act-band", style: `left: ${pct(b0)}; width: ${pct(b1 - b0)}` })),
-            byDay.get(key(date)).map(dot)));
+            dayGroups.get(key(date)).map(dot)));
       }),
       h("div", { class: "act-row act-axis", "aria-hidden": "true" },
         h("span", { class: "act-day" }),
