@@ -57,16 +57,27 @@ def ad(start, end, confidence="high", advertiser="Acme"):
     return ads.Ad(start=start, end=end, advertiser=advertiser, confidence=confidence)
 
 
-def test_snap_moves_boundaries_to_the_middle_of_a_pause():
+def test_snap_moves_boundaries_outwards_into_pauses():
     pauses = ads._pauses(TRANSCRIPT)
     assert pauses == [(99, 101), (159.5, 160.5), (300, 301)]
-    assert ads.snap(98.5, pauses) == 100
-    assert ads.snap(162, pauses) == 160
-    assert ads.snap(200, pauses) == 200  # no pause close by: left alone
+    assert ads.snap_start(101, pauses) == 100      # the pause before the ad's first word
+    assert ads.snap_start(99.4, pauses) == 100     # already in it
+    assert ads.snap_start(162, pauses) == 160      # back to the pause just before
+    assert ads.snap_start(98.5, pauses) == 98.5    # never forward into the ad, to a pause after its start
+    assert ads.snap_end(159.5, pauses) == 160      # the pause after its last word
+    assert ads.snap_end(158, pauses) == 160        # forward to the pause just after
+    assert ads.snap_end(102, pauses) == 102        # never back into the ad, to a pause before its end
+    assert ads.snap_end(200, pauses) == 200        # no pause close by: left alone
+
+
+def test_snap_stays_near_the_speech_in_a_long_pause():
+    pauses = [(10.0, 20.0)]
+    assert ads.snap_start(20.0, pauses) == 18.5
+    assert ads.snap_end(10.0, pauses) == 11.5
 
 
 def test_choose_keeps_only_confident_and_plausible_cuts():
-    cuts, note = ads.choose([ad(99.4, 161, advertiser="Acme"), ad(400, 410, "low", "Joke")], TRANSCRIPT, 600)
+    cuts, note = ads.choose([ad(99.4, 159.6, advertiser="Acme"), ad(400, 410, "low", "Joke")], TRANSCRIPT, 600)
     assert note is None
     assert cuts == [{"start": 100, "end": 160, "source": "transcript", "advertiser": "Acme", "confidence": "high"}]
     assert ads.choose([ad(0, 300)], TRANSCRIPT, 3600)[1].startswith("not cut: one ad read was 300s")
@@ -74,7 +85,7 @@ def test_choose_keeps_only_confident_and_plausible_cuts():
 
 
 def test_cuts_right_after_downloading(held, transcript_mode):
-    transcript_mode.answer = [ad(99.4, 161), ad(400, 410, "low")]
+    transcript_mode.answer = [ad(99.4, 159.6), ad(400, 410, "low")]
     # No eight-hour wait: due as soon as it's downloaded.
     assert sponsors.process_next(now=episode()["added_at"])
     calls = transcript_mode.calls
@@ -90,7 +101,7 @@ def test_cuts_right_after_downloading(held, transcript_mode):
 def test_sponsorblock_marks_and_transcript_finds_are_both_cut(held, transcript_mode):
     # Marked so far: one ad. The transcript finds another nobody has marked yet.
     transcript_mode.marks["e1"] = [(30, 90)]
-    transcript_mode.answer = [ad(99.4, 161, advertiser="Acme")]
+    transcript_mode.answer = [ad(99.4, 159.6, advertiser="Acme")]
     sponsors.process_next(now=episode()["added_at"])
     assert transcript_mode.calls["transcribe"] == ["e1.m4a"]
     assert json.loads(episode()["sponsor_cuts"])["cuts"] == [
@@ -121,13 +132,13 @@ def test_sponsorblock_down_falls_back_to_the_transcript(held, transcript_mode, m
     def down(vid):
         raise OSError("unreachable")
     monkeypatch.setattr(sponsors, "lookup", down)
-    transcript_mode.answer = [ad(99.4, 161)]
+    transcript_mode.answer = [ad(99.4, 159.6)]
     sponsors.process_next(now=episode()["added_at"])
     assert episode()["sponsor_removed"] == 60
 
 
 def test_video_copy_reuses_the_audio_copys_cuts(held, transcript_mode, fake_downloader):
-    transcript_mode.answer = [ad(99.4, 161)]
+    transcript_mode.answer = [ad(99.4, 159.6)]
     sponsors.process_next(now=episode()["added_at"])
     subscriptions.update_show(held["id"], video_copy=True)
     subscriptions.download_next_copy()
@@ -197,3 +208,21 @@ def test_old_transcripts_are_cleaned_up(tmp_path):
     assert transcribe.clean_up() == 1
     assert not transcribe.path_for("old").exists() and transcribe.path_for("new").exists()
     assert MEDIA_DIR.exists()
+
+
+def test_transcript_lines_follow_sentences():
+    t = {"segments": [{"start": 0, "end": 9, "text": "x", "words": [
+        [0.0, 0.5, " That's"], [0.5, 1.0, " 15%"], [1.0, 1.5, " off."], [1.6, 2.0, " Did"], [2.0, 2.4, " you"],
+        [2.4, 3.0, " see?"], [3.0, 3.5, " So"], [5.0, 5.5, " anyway"]]},
+        {"start": 9, "end": 10, "text": "No word times here", "words": []}]}
+    assert ads.transcript_text(t).splitlines() == [
+        "[0.0-1.5] That's 15% off.",   # the sentence ends the line...
+        "[1.6-3.0] Did you see?",
+        "[3.0-3.5] So",                # ...and so does a pause of a second or more
+        "[5.0-5.5] anyway",
+        "[9.0-10.0] No word times here",
+    ]
+
+
+def test_prompt_counts_other_podcasts_promos():
+    assert "Promotions for other podcasts" in ads.RULES
