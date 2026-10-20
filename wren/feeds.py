@@ -41,6 +41,7 @@ class FeedItem:
 class Feed:
     title: str
     items: list[FeedItem]  # newest first
+    author: str | None = None  # a book's, from its epub or its files' tags
 
 
 def _ydl(limit: int = LIST_LIMIT) -> yt_dlp.YoutubeDL:

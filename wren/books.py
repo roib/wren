@@ -235,7 +235,7 @@ def fetch(source: str) -> Feed:
     items = [FeedItem(item_id=item_id(ch), url=_item_url(ch), title=ch.title, duration=round(ch.duration),
                       live_status=None, thumb_url=f"/media/{thumb}" if thumb else None)
              for ch in reversed(book["chapters"])]
-    return Feed(title=book["title"], items=items)
+    return Feed(title=book["title"], items=items, author=book["author"])
 
 
 # ---- chapters from the epub -------------------------------------------------------------

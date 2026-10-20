@@ -266,6 +266,9 @@ def test_epub_chapters_replace_the_ones_from_marks(epub_book, monkeypatch):
     while subscriptions.download_next():
         pass
     eps = chapters(show["id"])
+    # The epub's author replaces the one from the files' tags.
+    assert subscriptions.get_show(show["id"])["author"] == "E. Author"
+    assert {e["channel"] for e in eps} == {"E. Author"}
     assert [e["title"] for e in eps] == ["Prologue", "Chapter 1: First",
                                          "Part II: Later · Chapter 2: Second & Chapter 3: Third", "Chapter 4: Fourth"]
     assert not any(f.exists() for f in old)

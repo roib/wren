@@ -263,13 +263,18 @@ def _check_feed(show: dict) -> int:
             "SELECT item_id FROM feed_items WHERE show_id = ?", (show["id"],))}
         new = [i for i in feed.items if i.item_id not in seen and not _is_pending(i)]
         if show["kind"] == "book":
-            # How chapters are named can improve; podcast apps pick up a new
-            # title for the same episode.
+            # How chapters are named can improve, and an epub added later knows
+            # the real author (the files' tags often name the publisher);
+            # podcast apps pick up both for the same episode.
+            author = feed.author or show["author"]
+            if author != show["author"]:
+                conn.execute("UPDATE shows SET author = ? WHERE id = ?", (author, show["id"]))
             for i in feed.items:
                 if i.item_id in seen:
                     conn.execute("UPDATE feed_items SET title = ? WHERE show_id = ? AND item_id = ?",
                                  (i.title, show["id"], i.item_id))
-                    conn.execute("UPDATE episodes SET title = ? WHERE video_id = ?", (i.title, i.item_id))
+                    conn.execute("UPDATE episodes SET title = ?, channel = ? WHERE video_id = ?",
+                                 (i.title, author, i.item_id))
             if feed.items:
                 _replace_old_chapters(conn, show, {i.item_id for i in feed.items})
         # Items recorded before dates were kept get theirs filled in.
