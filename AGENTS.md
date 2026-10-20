@@ -79,9 +79,10 @@ three-pane desktop layout.
   A survey of popular shows found all SponsorBlock marks in within ~6 hours
   (median 85 min); the first mark isn't always the last, so don't publish on
   the first one. Video copies are cut at keyframes (stream copy, no re-encode).
-  With `ANTHROPIC_API_KEY` set there's no wait: an episode SponsorBlock hasn't
-  marked is transcribed (Whisper `base.en`, CPU) and Claude Haiku finds the ad
-  reads. Tested against SponsorBlock on six episodes: 97% of marked time found,
+  With Claude available there's no wait: every episode is transcribed (Whisper
+  `base.en`, CPU), Claude Haiku finds the ad reads, and those are cut together
+  with any SponsorBlock marks (marks keep their boundaries where they overlap).
+  Don't trust SponsorBlock alone that early: its marks may still be partial. Tested against SponsorBlock on six episodes: 97% of marked time found,
   boundaries within seconds; the one wrong pick was "low" confidence, so only
   "high" is cut. Processing runs in its own thread (`wren-sponsors`), beside
   downloads. `wren ads-check <video_id>` is a dry run for a show.

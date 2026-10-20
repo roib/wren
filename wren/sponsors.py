@@ -6,10 +6,11 @@ them, by when the marks are in. Then each is processed exactly once: the marked
 sponsor segments are cut out (losslessly, no re-encoding) and it joins the feed.
 The file isn't changed after that, so a podcast app never holds a stale copy.
 
-With a Claude API key and Whisper installed ("transcript" mode), there's no
-wait: an episode is processed right after downloading, using SponsorBlock's
-marks if it already has any and otherwise the ad reads Claude finds in a local
-transcript (ads.py, transcribe.py).
+With Claude and Whisper available ("transcript" mode), there's no wait: an
+episode is processed right after downloading, cutting both the ad reads Claude
+finds in a local transcript (ads.py, transcribe.py) and any SponsorBlock marks.
+Both, because so soon after publishing SponsorBlock may have only some of an
+episode's ads marked.
 
 SponsorBlock (sponsor.ajay.app) is run by volunteers; lookups send only the
 first characters of a hash of the video id. Its data is CC BY-NC-SA 4.0.
@@ -145,9 +146,9 @@ def decide(ep: dict) -> dict:
             raise  # nothing else to go on: try again later
         log.warning("SponsorBlock unreachable; using the transcript for %s", ep["title"])
         marked = []
-    if marked or mode() != "transcript":
-        return {"cuts": [{"start": round(a, 1), "end": round(b, 1), "source": "sponsorblock"} for a, b in marked],
-                "note": None}
+    marks = [{"start": round(a, 1), "end": round(b, 1), "source": "sponsorblock"} for a, b in marked]
+    if mode() != "transcript":
+        return {"cuts": marks, "note": None}
     transcript = transcribe.load(ep["video_id"])
     if transcript is None:
         _step(ep, "transcribing")
@@ -155,10 +156,29 @@ def decide(ep: dict) -> dict:
         transcribe.save(ep["video_id"], transcript)
         log.info("Transcribed %s in %ss", ep["title"], transcript["seconds"])
     _step(ep, "waiting for Claude" if ads.backend() == "claude-cli" else "finding ad reads")
-    cuts, note = ads.choose(ads.ask_claude(transcript, ep["title"], ep["video_id"]), transcript, ep.get("duration"))
+    found, note = ads.choose(ads.ask_claude(transcript, ep["title"], ep["video_id"]), transcript, ep.get("duration"))
     if note:
         log.warning("%s: %s", ep["title"], note)
-    return {"cuts": cuts, "note": note}
+    return {"cuts": combine(marks, found), "note": note}
+
+
+def combine(marks: list[dict], found: list[dict]) -> list[dict]:
+    """SponsorBlock's marks plus the ad reads found in the transcript. Where a
+    find overlaps a mark, the mark's boundaries stand (people adjusted them) and
+    it takes the advertiser's name; finds that overlap no mark are cut too."""
+    out = [dict(m) for m in marks]
+    for c in found:
+        hit = [m for m in out if m["source"] == "sponsorblock"
+               and min(m["end"], c["end"]) - max(m["start"], c["start"]) > 0]
+        for m in hit:
+            names = [n for n in (m.get("advertiser"), c.get("advertiser")) if n]
+            m["advertiser"] = ", ".join(dict.fromkeys(names)) or None
+        if not hit:
+            out.append(c)
+    for m in out:
+        if m.get("advertiser") is None:
+            m.pop("advertiser", None)
+    return sorted(out, key=lambda c: c["start"])
 
 
 def process(ep: dict) -> None:

@@ -687,7 +687,8 @@ function sponsorLine(sp) {
     return sp.ready_at * 1000 <= Date.now() ? "Checking for sponsor reads · not in the feed yet"
       : `Waiting for sponsor marks · goes into the feed ${fmtWhenLong(sp.ready_at)}`;
   }
-  if (sp.note) return `Sponsor reads ${sp.note}`;
+  // A transcript result set aside still leaves SponsorBlock's cuts (in the table).
+  if (sp.note && !sp.cuts?.length) return `Sponsor reads ${sp.note}`;
   if (!sp.removed) return "No sponsor reads found";
   if (!sp.cuts?.length) return `Removed ${plural(sp.count || 1, "sponsor read")} · ${length(sp.removed)} in all`;
   return null;
@@ -819,8 +820,8 @@ function settingsCard(s, w) {
     settingRow("Remove sponsor reads", toggle(!!s.skip_sponsors, (on) => patchShow(s, { skip_sponsors: on },
       on ? "Sponsor reads will be removed from new episodes" : "Sponsor reads kept"), "Remove sponsor reads"),
       w.sponsor_mode === "transcript"
-        ? "New episodes are checked right after downloading: sponsor reads marked on SponsorBlock, or else found in a "
-          + "transcript, are cut out before they go into the feed. Episodes already downloaded stay as they are."
+        ? "New episodes are checked right after downloading: the sponsor reads found in a transcript, and any marked "
+          + "on SponsorBlock, are cut out before they go into the feed. Episodes already downloaded stay as they are."
         : `New episodes wait until ${w.sponsor_delay_hours} hours after they're published, then the sponsor reads `
           + "SponsorBlock users marked are cut out. Episodes already downloaded stay as they are."),
     settingRow("Check for new episodes", toggle(!!s.enabled, (on) => patchShow(s, { enabled: on },

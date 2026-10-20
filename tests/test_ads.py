@@ -87,11 +87,34 @@ def test_cuts_right_after_downloading(held, transcript_mode):
     assert transcribe.load("e1") == TRANSCRIPT  # kept, to check the cut afterwards
 
 
-def test_sponsorblock_marks_are_used_when_there_are_some(held, transcript_mode):
+def test_sponsorblock_marks_and_transcript_finds_are_both_cut(held, transcript_mode):
+    # Marked so far: one ad. The transcript finds another nobody has marked yet.
     transcript_mode.marks["e1"] = [(30, 90)]
+    transcript_mode.answer = [ad(99.4, 161, advertiser="Acme")]
     sponsors.process_next(now=episode()["added_at"])
-    assert transcript_mode.calls["transcribe"] == [] and transcript_mode.calls["claude"] == []
-    assert json.loads(episode()["sponsor_cuts"])["cuts"] == [{"start": 30, "end": 90, "source": "sponsorblock"}]
+    assert transcript_mode.calls["transcribe"] == ["e1.m4a"]
+    assert json.loads(episode()["sponsor_cuts"])["cuts"] == [
+        {"start": 30, "end": 90, "source": "sponsorblock"},
+        {"start": 100, "end": 160, "source": "transcript", "advertiser": "Acme", "confidence": "high"}]
+    assert transcript_mode.calls["cut"] == [("e1.m4a", [(30, 90), (100, 160)])]
+
+
+def test_overlapping_finds_keep_sponsorblocks_boundaries():
+    marks = [{"start": 95, "end": 170, "source": "sponsorblock"}]
+    found = [{"start": 100, "end": 130, "source": "transcript", "advertiser": "Hims", "confidence": "high"},
+             {"start": 130, "end": 168, "source": "transcript", "advertiser": "Upwork", "confidence": "high"}]
+    assert sponsors.combine(marks, found) == [
+        {"start": 95, "end": 170, "source": "sponsorblock", "advertiser": "Hims, Upwork"}]
+    assert sponsors.combine(marks, []) == marks
+
+
+def test_set_aside_transcript_still_cuts_the_marks(held, transcript_mode):
+    transcript_mode.marks["e1"] = [(30, 90)]
+    transcript_mode.answer = [ad(0, 300)]  # implausible: set aside
+    sponsors.process_next(now=episode()["added_at"])
+    decision = json.loads(episode()["sponsor_cuts"])
+    assert decision["cuts"] == [{"start": 30, "end": 90, "source": "sponsorblock"}]
+    assert decision["note"].startswith("not cut")
 
 
 def test_sponsorblock_down_falls_back_to_the_transcript(held, transcript_mode, monkeypatch):
