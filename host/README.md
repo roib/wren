@@ -27,6 +27,12 @@ Needs `jq`, `flock` and `timeout` (util-linux/coreutils) on the host, and
 lingering for your user (`loginctl enable-linger`) so the units run while
 you're logged out.
 
+With rootless podman the data folder belongs to the container's user, which
+your own user can't write to; `wren-claude.service` therefore runs the helper
+through `podman unshare` (as the container's root, which can). Wren creates
+`ads/requests` and `ads/answers` when it starts, so start Wren once before
+enabling the units.
+
 1. Install Claude Code (native installer) and log in once: run `claude`, then `/login`.
 2. Install the helper and units, with your data folder (the host side of `/data`)
    in place of `/path/to/wren-data` in `wren-claude.service` and `wren-claude.path`:

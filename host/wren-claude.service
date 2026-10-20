@@ -9,6 +9,9 @@ Type=oneshot
 Environment=WREN_DATA_DIR=/path/to/wren-data
 # Where the Claude Code installer puts `claude`.
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=%h/.local/bin/wren-claude-helper ${WREN_DATA_DIR}
+# Rootless podman: the data folder belongs to the container's user, so run as
+# the container's root (`podman unshare`), which may write there. Without
+# rootless podman, run the helper directly.
+ExecStart=/usr/bin/podman unshare %h/.local/bin/wren-claude-helper ${WREN_DATA_DIR}
 Nice=10
 TimeoutStartSec=2h

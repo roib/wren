@@ -25,7 +25,7 @@ from pathlib import Path
 import yt_dlp
 
 from . import ads, db, downloader, push, sponsors, subscriptions, transcribe
-from .config import (ACTIVE_HOURS, ADS_BACKEND, BLOCK_PAUSE_MINUTES, MAX_DOWNLOADS_PER_HOUR, MEDIA_DIR,
+from .config import (ACTIVE_HOURS, ADS_BACKEND, ADS_DIR, BLOCK_PAUSE_MINUTES, MAX_DOWNLOADS_PER_HOUR, MEDIA_DIR,
                      POLL_JITTER_MINUTES, POLL_MINUTES, SPONSOR_DELAY_HOURS, TIMEZONE)
 
 log = logging.getLogger("wren")
@@ -221,6 +221,10 @@ class Worker:
 
     def start(self) -> None:
         _recover()
+        # The host helper's folders, made here so they belong to Wren's user: it
+        # can then delete the helper's answers (see host/README.md).
+        for sub in ("requests", "answers"):
+            (ADS_DIR / sub).mkdir(parents=True, exist_ok=True)
         push.resolve_matching("paused:")  # a pause doesn't survive a restart
         self.next_poll = next_active(time.time() + FIRST_POLL_DELAY)
         self._thread = threading.Thread(target=self._run, name="wren-worker", daemon=True)
