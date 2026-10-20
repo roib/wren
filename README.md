@@ -64,8 +64,8 @@ It also helps with:
   - Skips Shorts and clips with a minimum length.
   - Can download only titles matching a filter.
   - Skips private and members-only videos without retrying them.
-- **Removes sponsor reads** (per show, optional), cutting them out losslessly
-  before an episode goes into its feed. Each episode is processed once and
+- **Removes sponsor reads** (per show, optional: when subscribing or later in
+  its settings), cutting them out losslessly before an episode goes into its feed. Each episode is processed once and
   never changed after that.
   - With Claude available, right after downloading: the ad reads Claude finds
     in a transcript made on the server with Whisper, together with any marked on

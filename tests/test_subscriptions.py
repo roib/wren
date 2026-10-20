@@ -227,3 +227,18 @@ def test_list_pending_states(fake_feeds, fake_downloader, monkeypatch):
     monkeypatch.setattr(subscriptions, "current_item", (show["id"], "a"))
     states = {p["item_id"]: p["state"] for p in subscriptions.list_pending()}
     assert states == {"a": "downloading", "b": "premiere", "c": "retrying", "d": "queued"}
+
+
+def test_subscribe_with_sponsor_removal_cuts_the_first_episodes_too(fake_feeds, fake_downloader):
+    fake_feeds.set(SHOW, "Show", [item("e2"), item("e1")])
+    show = subscriptions.subscribe(SHOW, backfill=2, skip_sponsors=True, skip_intros=True)
+    assert (show["skip_sponsors"], show["skip_intros"]) == (1, 1)
+    subscriptions.sync()
+    # Saved before anything downloaded: the backfill waits to be cut like any new episode.
+    assert {e["sponsor_state"] for e in db.list_episodes()} == {"pending"}
+
+
+def test_subscribe_defaults_keep_ads_and_intros(fake_feeds):
+    fake_feeds.set(SHOW, "Show", [])
+    show = subscriptions.subscribe(SHOW, skip_intros=True)  # intros only with sponsor removal
+    assert (show["skip_sponsors"], show["skip_intros"]) == (0, 0)

@@ -179,3 +179,18 @@ def test_switch_endpoint(fake_feeds, feed):
     assert r.status_code == 200 and r.json()["kind"] == "rss"
     assert client.post("/api/shows/999/source", json={"url": FEED}).status_code == 404
     assert client.post(f"/api/shows/{show['id']}/source", json={"url": "https://example.com/x"}).status_code == 400
+
+
+def test_podcast_subscribe_ignores_intro_cutting(feed):
+    show = subscriptions.subscribe(FEED, skip_sponsors=True, skip_intros=True)
+    assert (show["skip_sponsors"], show["skip_intros"]) == (1, 0)  # SponsorBlock marks are YouTube-only
+
+
+def test_subscribe_api_takes_the_sponsor_settings(fake_feeds):
+    client = TestClient(server.app)
+    fake_feeds.set(YT, "Example Show", [])
+    r = client.post("/api/shows", json={"url": YT, "backfill": 1, "skip_sponsors": True})
+    assert r.status_code == 201 and (r.json()["skip_sponsors"], r.json()["skip_intros"]) == (1, 0)
+    other = "https://www.youtube.com/playlist?list=UUother"
+    fake_feeds.set(other, "Other", [])
+    assert client.post("/api/shows", json={"url": other}).json()["skip_sponsors"] == 0  # off by default

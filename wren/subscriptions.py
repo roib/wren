@@ -69,9 +69,11 @@ def _fetch(kind: str, feed_url: str) -> feeds.Feed:
 
 
 def subscribe(url: str, mode: str = "audio", keep_last: int = 10, backfill: int = 3,
-              min_duration: int = 300, title_filter: str | None = None) -> dict:
+              min_duration: int = 300, title_filter: str | None = None,
+              skip_sponsors: bool = False, skip_intros: bool = False) -> dict:
     """Add a show, from YouTube or its podcast feed. Its newest `backfill`
-    episodes are queued; older ones are ignored."""
+    episodes are queued; older ones are ignored. The sponsor settings are saved
+    before anything downloads, so the first episodes are cut too."""
     if mode not in ("audio", "video"):
         raise ValueError("mode must be 'audio' or 'video'")
     _check_regex(title_filter)  # fail now rather than on every sync
@@ -88,10 +90,11 @@ def subscribe(url: str, mode: str = "audio", keep_last: int = 10, backfill: int 
     with db.connect() as conn:
         cur = conn.execute(
             """INSERT INTO shows (name, kind, source_url, feed_url, mode, keep_last,
-                                  min_duration, title_filter, last_checked, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (feed.title or url, kind, url, feed_url, mode, keep_last, min_duration,
-             title_filter, _now(), _now()),
+                                  min_duration, title_filter, skip_sponsors, skip_intros, last_checked, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (feed.title or url, kind, url, feed_url, mode, keep_last, min_duration, title_filter,
+             int(bool(skip_sponsors)), int(bool(skip_sponsors and skip_intros and kind == "youtube")),
+             _now(), _now()),
         )
         show_id = cur.lastrowid
         show = dict(conn.execute("SELECT * FROM shows WHERE id = ?", (show_id,)).fetchone())

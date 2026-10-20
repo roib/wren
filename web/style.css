@@ -541,6 +541,10 @@ main { margin-top: 16px; }
 .switch-offer { margin-bottom: 14px; }
 .switch-offer p { margin: 0 0 8px; font-size: 14px; line-height: 1.4; }
 .field-label.or { margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--line); }
+/* Add page: the sponsor switches under "Download the latest". */
+.sub-settings { margin: 4px 0 12px; }
+.sub-settings .setting { padding: 10px 0; border-bottom: 0; }
+.sub-settings .setting + .setting { border-top: 1px solid var(--line); }
 button.row { width: 100%; text-align: left; background: none; border: 0; font: inherit; color: inherit; }
 
 /* When an episode was downloaded: in Recent rows, and in an opened row. */

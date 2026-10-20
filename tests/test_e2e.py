@@ -160,9 +160,13 @@ def test_subscribe_from_a_pasted_link(phone, fake_feeds, monkeypatch):
     phone.locator("#add-url").fill(SHOW)
     phone.get_by_role("button", name="Look up").tap()
     playwright.expect(phone.locator(".preview-title")).to_have_text("First episode")
+    sponsors_switch = phone.get_by_role("switch", name="Remove sponsor reads")
+    playwright.expect(sponsors_switch).to_have_attribute("aria-checked", "false")  # off unless asked
+    sponsors_switch.tap()
+    playwright.expect(phone.get_by_role("switch", name="Also cut intro and outro")).to_be_visible()
     phone.get_by_role("button", name="Subscribe to New Show").tap()
     playwright.expect(title(phone)).to_have_text("New Show")
-    assert [s["name"] for s in subscriptions.list_shows()] == ["New Show"]
+    assert [(s["name"], s["skip_sponsors"]) for s in subscriptions.list_shows()] == [("New Show", 1)]
 
 
 def test_desktop_panes(desktop, show):

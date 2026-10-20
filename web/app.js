@@ -1015,7 +1015,7 @@ function backfillPicker(state, name) {
 }
 
 // Each show offered keeps its own format and backfill choice.
-const subChoice = (url) => (add.subs[url] ??= { mode: "audio", backfill: 3 });
+const subChoice = (url) => (add.subs[url] ??= { mode: "audio", backfill: 3, skipSponsors: false, skipIntros: false });
 
 function subscribeBlock(url, name, subscribed, { audioOnly = false, sameShow = [], podcastFeed = false } = {}) {
   if (subscribed) {
@@ -1038,6 +1038,12 @@ function subscribeBlock(url, name, subscribed, { audioOnly = false, sameShow = [
     switches.length ? h("div", { class: "field-label or" }, "Or add it as a separate show") : null,
     audioOnly ? null : [h("div", { class: "field-label" }, "Format"), modePicker(choice, "mode", `mode-${url}`)],
     h("div", { class: "field-label" }, "Download the latest"), backfillPicker(choice, `backfill-${url}`),
+    // The same switches as in show settings, so the first episodes are cut too.
+    h("div", { class: "sub-settings" },
+      settingRow("Remove sponsor reads", toggle(choice.skipSponsors, (on) => { choice.skipSponsors = on; render(); },
+        "Remove sponsor reads")),
+      choice.skipSponsors && !podcastFeed ? settingRow("Also cut intro and outro",
+        toggle(choice.skipIntros, (on) => { choice.skipIntros = on; }, "Also cut intro and outro")) : null),
     h("button", { class: switches.length ? "button full" : "primary", onclick: (e) => subscribe(url, name, e.currentTarget) },
       switches.length ? "Add as a separate show" : `Subscribe to ${name}`));
 }
@@ -1097,9 +1103,11 @@ async function subscribe(url, name, btn) {
   btn.disabled = true;
   btn.textContent = "Subscribing…";
   try {
-    const { mode, backfill } = subChoice(url);
-    const show = await api("/api/shows", { method: "POST", body: { url, mode, backfill } });
-    toast(`Subscribed to ${show.name}. Downloading the latest ${backfill}.`, 5000);
+    const { mode, backfill, skipSponsors, skipIntros } = subChoice(url);
+    const show = await api("/api/shows", { method: "POST",
+      body: { url, mode, backfill, skip_sponsors: skipSponsors, skip_intros: skipSponsors && skipIntros } });
+    toast(`Subscribed to ${show.name}. Downloading the latest ${backfill}`
+      + `${show.skip_sponsors ? ", with sponsor reads removed" : ""}.`, 5000);
     Object.assign(add, { url: "", result: null, error: null, subs: {} });
     navigate(`#/show/${show.id}`);
   } catch (err) {

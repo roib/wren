@@ -150,6 +150,8 @@ class SubscribeRequest(BaseModel):
     backfill: int = 3
     min_duration: int = 300
     title_filter: str | None = None
+    skip_sponsors: bool = False
+    skip_intros: bool = False
 
 
 class ShowUpdate(BaseModel):
