@@ -536,6 +536,18 @@ main { margin-top: 16px; }
 .when .ic { width: 13px; height: 13px; }
 /* Lined up with the episode's title, like the actions below it. */
 .ep-when { margin: 0; padding: 0 12px 10px 102px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+/* What was cut from an episode. Full card width on phones (four columns need
+   it); lined up with the title on desktop, like the lines above. */
+.cuts { padding: 0 14px 12px; }
+.cuts-head { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+.cuts table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+.cuts th { text-align: left; font-weight: 500; font-size: 11px; letter-spacing: 0.02em; text-transform: uppercase;
+  color: var(--muted); padding: 4px 10px 4px 0; border-bottom: 1px solid var(--line-strong); }
+.cuts td { padding: 5px 10px 5px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+.cuts td.num { white-space: nowrap; }
+.cuts td.src { color: var(--muted); white-space: nowrap; }
+.cuts tr:last-child td { border-bottom: 0; }
+.cuts-note { color: var(--muted); font-size: 12px; margin-top: 4px; }
 
 /* Download activity (Status): a row per day, hours across, a dot per download. */
 .act { padding: 14px 14px 12px; }
@@ -872,7 +884,7 @@ video::cue { background: rgba(0, 0, 0, 0.65); color: #fff; font-size: 0.85em; }
   .feed-buttons { display: flex; }
   .hero-actions { flex: 1 1 100%; }
   .ep-thumb { width: 96px; height: 54px; }
-  .ep-actions, .ep-when { padding-left: 118px; }
+  .ep-actions, .ep-when, .cuts { padding-left: 118px; }
 
   /* Settings in two columns. */
   .settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }

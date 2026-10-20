@@ -657,6 +657,7 @@ function episodeRow(e, { withShow = false, when = fmtWhen } = {}) {
     h("div", { class: "collapse" },
       h("div", { class: "collapse-body" },
         h("p", { class: "ep-when" }, ...downloadedLines(e)),
+        cutsTable(e.sponsors),
         h("div", { class: "ep-actions" },
           e.copies.map((c) => h("button", { class: "action", onclick: () => openPlayer(e, c) },
             icon("play"), c.mode === "video" ? "Play video" : "Play audio")),
@@ -675,10 +676,11 @@ function downloadedLines(e) {
   const lines = [e.upload_date ? `Published ${fmtDate(e.upload_date)}` : null];
   if (same) lines.push(`Downloaded ${fmtWhenLong(times[0])}`);
   else for (const c of e.copies) lines.push(`${c.mode === "video" ? "Video" : "Audio"} downloaded ${fmtWhenLong(c.added_at)}`);
-  lines.push(...(sponsorLine(e.sponsors) || "").split("\n"));
+  lines.push(sponsorLine(e.sponsors));
   return lines.filter(Boolean).flatMap((line, i) => (i ? [h("br"), line] : [line]));
 }
 
+// One line about sponsor reads; cuts that were made get a table instead (cutsTable).
 function sponsorLine(sp) {
   if (!sp) return null;
   if (sp.state === "pending") {
@@ -687,13 +689,32 @@ function sponsorLine(sp) {
   }
   if (sp.note) return `Sponsor reads ${sp.note}`;
   if (!sp.removed) return "No sponsor reads found";
-  const lines = [`Removed ${plural(sp.count || 1, "sponsor read")} · ${clock(sp.removed)}`];
-  // Each cut, in the original's time: when, who, and how it was found.
-  for (const c of sp.cuts || []) {
-    lines.push(`${clock(c.start)}–${clock(c.end)}${c.advertiser ? ` · ${c.advertiser}` : ""} · `
-      + (c.source === "transcript" ? "found in transcript" : "SponsorBlock"));
-  }
-  return lines.join("\n");
+  if (!sp.cuts?.length) return `Removed ${plural(sp.count || 1, "sponsor read")} · ${length(sp.removed)} in all`;
+  return null;
+}
+
+// What was cut: where (in the original video), how long, the advertiser and how it was found.
+function cutsTable(sp) {
+  if (sp?.state !== "done" || !sp.removed || !sp.cuts?.length) return null;
+  return h("div", { class: "cuts" },
+    h("div", { class: "cuts-head" }, `Removed ${plural(sp.cuts.length, "sponsor read")} · ${length(sp.removed)} in all`),
+    h("table", {},
+      h("thead", {}, h("tr", {},
+        h("th", {}, "Where"), h("th", {}, "Length"), h("th", {}, "Ad"), h("th", {}, "Source"))),
+      h("tbody", {}, sp.cuts.map((c) => h("tr", {},
+        h("td", { class: "num" }, `${clock(c.start)}–${clock(c.end)}`),
+        h("td", { class: "num" }, length(c.end - c.start)),
+        h("td", {}, c.advertiser || "—"),
+        h("td", { class: "src" }, c.source === "transcript" ? "Transcript" : "SponsorBlock"))))),
+    h("div", { class: "cuts-note" }, "Times are in the original video."));
+}
+
+// A length of time that can't be mistaken for a clock time: "44s", "1m 21s", "1h 02m".
+function length(sec) {
+  sec = Math.round(sec);
+  if (sec < 60) return `${sec}s`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ${String(sec % 60).padStart(2, "0")}s`;
+  return `${Math.floor(sec / 3600)}h ${String(Math.floor((sec % 3600) / 60)).padStart(2, "0")}m`;
 }
 
 // Seconds as m:ss, or h:mm:ss past an hour.
