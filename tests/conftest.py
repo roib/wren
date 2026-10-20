@@ -15,7 +15,7 @@ os.environ.pop("ANTHROPIC_API_KEY", None)  # transcript mode only where a test t
 
 import pytest  # noqa: E402
 
-from wren import artwork, db, downloader, feeds, podcast, push, subscriptions  # noqa: E402
+from wren import artwork, db, downloader, feeds, podcast, podcasts, push, subscriptions  # noqa: E402
 from wren.config import DATA_DIR, MEDIA_DIR  # noqa: E402
 
 
@@ -38,6 +38,36 @@ def fresh_data(monkeypatch):
     monkeypatch.setattr(artwork, "make_show_art", lambda show, fallback_thumb=None: False)
     yield
     shutil.rmtree(DATA_DIR, ignore_errors=True)
+
+
+class FakeWeb:
+    """Podcast feeds, audio and Apple's directory for the tests: url -> bytes.
+    Anything else is refused, so a test can never reach the network."""
+
+    def __init__(self):
+        self.pages: dict[str, bytes] = {}
+        self.requests: list[str] = []
+
+    def open(self, url, timeout=30):
+        import io
+        import urllib.error
+        self.requests.append(url)
+        # Exact pages first, then the longest matching "prefix*".
+        matches = [p for p in self.pages if p == url] or sorted(
+            (p for p in self.pages if p.endswith("*") and url.startswith(p[:-1])), key=len, reverse=True)
+        if matches:
+            resp = io.BytesIO(self.pages[matches[0]])
+            resp.geturl = lambda: url
+            resp.headers = {"Content-Type": "audio/mpeg" if url.endswith(".mp3") else "application/xml"}
+            return resp
+        raise urllib.error.HTTPError(url, 404, "not in the test's pages", {}, None)
+
+
+@pytest.fixture(autouse=True)
+def web(monkeypatch):
+    fake = FakeWeb()
+    monkeypatch.setattr(podcasts, "_open", fake.open)
+    return fake
 
 
 @pytest.fixture(autouse=True)

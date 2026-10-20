@@ -103,7 +103,11 @@ def make_show_art(show: dict, fallback_thumb: str | None = None) -> bool:
     from an episode thumbnail (relative to MEDIA_DIR). Returns True if saved."""
     img = None
     try:
-        url = channel_avatar(show["source_url"])
+        if show.get("kind") == "rss":
+            from . import podcasts
+            url = podcasts.show_image(show["feed_url"])
+        else:
+            url = channel_avatar(show["source_url"])
         if url:
             img = _fetch(url)
     except Exception as e:  # network, YouTube changes, rate limits: fall back

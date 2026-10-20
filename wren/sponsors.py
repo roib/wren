@@ -133,6 +133,12 @@ def _other_copy_cuts(ep: dict) -> dict | None:
     return json.loads(row["sponsor_cuts"]) if row else None
 
 
+def _is_podcast(ep: dict) -> bool:
+    with db.connect() as conn:
+        row = conn.execute("SELECT kind FROM shows WHERE id = ?", (ep.get("show_id"),)).fetchone()
+    return bool(row and row["kind"] == "rss")
+
+
 def decide(ep: dict) -> dict:
     """What to cut from an episode: {"cuts": [{start, end, source, ...}], "note": why nothing was, or None}."""
     reused = _other_copy_cuts(ep)
@@ -140,7 +146,8 @@ def decide(ep: dict) -> dict:
         return reused
     _step(ep, "checking SponsorBlock")
     try:
-        marked = merge(lookup(ep["video_id"]), ep.get("duration"))
+        # SponsorBlock only knows YouTube videos; podcast-feed episodes rely on the transcript.
+        marked = [] if _is_podcast(ep) else merge(lookup(ep["video_id"]), ep.get("duration"))
     except Exception:
         if mode() != "transcript":
             raise  # nothing else to go on: try again later

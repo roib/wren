@@ -44,6 +44,11 @@ It also helps with:
 - **Follows shows.** Subscribe to a YouTube channel or playlist, then choose
   audio or video and how many recent episodes to fetch. New episodes are
   picked up automatically.
+- **Or a show's own podcast feed.** For audio-only listening, a show can come
+  from its podcast feed instead: paste the feed or an Apple Podcasts link, or
+  search by name. Downloads are plain and quick, with none of YouTube's limits.
+  A show has one source at a time; switching keeps its episodes, settings and
+  feed in Podcasts, and nothing already released is downloaded again.
 - **Downloads in podcast-friendly formats.** Audio is AAC (`.m4a`), kept as
   YouTube serves it. Video is H.264/AAC MP4, up to 720p by default.
 - **Publishes podcast feeds.** Each show has a feed at `/feeds/<show>.xml`.
@@ -51,7 +56,7 @@ It also helps with:
   Single episodes you add by hand go in `/feeds/singles.xml`. Each show also
   gets square artwork made from its channel picture, with a small Wren badge
   so you can tell it apart from the official feed.
-- **Goes easy on YouTube.**
+- **Goes easy on YouTube** (shows from podcast feeds don't need it).
   - Checks shows every couple of hours, during set hours only.
   - Spaces downloads apart and caps them per hour.
   - Backs off for a while when YouTube starts rate-limiting.

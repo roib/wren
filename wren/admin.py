@@ -9,7 +9,7 @@ import urllib.parse
 
 import yt_dlp
 
-from . import artwork, db, feeds, podcast, sponsors, subscriptions, ytdl
+from . import artwork, db, feeds, podcast, podcasts, sponsors, subscriptions, ytdl
 from .config import MEDIA_DIR
 
 
@@ -265,13 +265,49 @@ def _playlist_choice(video_url: str) -> dict | None:
     return {"url": url, "title": feed.title, "episodes": len(feed.items), "subscribed": _subscribed(url)}
 
 
+def _words(name: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]+", name.lower()) if len(w) > 2 and w not in {"the", "and", "with", "show",
+                                                                                          "podcast", "official"}}
+
+
+def same_show(shows: list[dict], name: str, kind: str) -> list[dict]:
+    """Shows followed from the other source whose name looks like this one
+    ("Theo Von" / "This Past Weekend w/ Theo Von"): likely the same show."""
+    mine = _words(name)
+    out = []
+    for s in shows:
+        theirs = _words(s["name"])
+        if s["kind"] != kind and mine and theirs and (mine <= theirs or theirs <= mine):
+            out.append({"id": s["id"], "name": s["name"], "kind": s["kind"]})
+    return out
+
+
+def _podcast_show(feed_url: str) -> dict:
+    feed = podcasts.fetch(feed_url)
+    return {
+        "kind": "show", "source": "rss", "url": feed_url, "title": feed.title,
+        "subscribed": _subscribed(feed_url),
+        "same_show": same_show(subscriptions.list_shows(), feed.title, "rss"),
+        "latest": [{"title": i.title, "duration": i.duration, "thumb_url": i.thumb_url, "live": False}
+                   for i in feed.items[:5]],
+    }
+
+
 def resolve(url: str) -> dict:
-    """Work out what a pasted YouTube link is: a show (channel or playlist), with a
-    preview of its latest episodes, or a single video and the channel it's from."""
+    """Work out what was pasted: a YouTube show (channel or playlist) or podcast
+    feed, with a preview of its latest episodes; a single YouTube video and the
+    channel it's from; or, for a name, the podcasts it could be."""
     url = url.strip()
+    if not url:
+        raise ValueError("Paste a link, or type a show's name.")
     p = urllib.parse.urlparse(url)
-    if not p.netloc.endswith(("youtube.com", "youtu.be")):
-        raise ValueError("Paste a YouTube channel, playlist or video link.")
+    if not p.netloc:
+        results = podcasts.search(url)
+        for r in results:
+            r["subscribed"] = _subscribed(r["feed_url"])
+        return {"kind": "search", "query": url, "results": results}
+    if podcasts.is_feed_url(url):
+        return _podcast_show(podcasts.feed_url_for(url))
     # A video inside a playlist link: treat as the video (its playlist is rarely the show).
     if _is_video(url):
         # A …watch?v=…&list=… link means this video (its playlist is offered separately).
@@ -298,9 +334,11 @@ def resolve(url: str) -> dict:
     feed = feeds.fetch(feed_url)
     return {
         "kind": "show",
+        "source": "youtube",
         "url": url,
         "title": feed.title,
         "subscribed": _subscribed(feed_url),
+        "same_show": same_show(subscriptions.list_shows(), feed.title, "youtube"),
         "latest": [{
             "title": i.title,
             "duration": i.duration,

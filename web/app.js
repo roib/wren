@@ -552,8 +552,8 @@ function showHero(s) {
       h("div", { class: "hero-info" },
         showBadges(s),
         h("div", { class: "hero-meta" }, join(plural(s.episodes, "episode"), fmtBytes(s.bytes))),
-        h("div", { class: "hero-meta" }, join(`Checked ${ago(s.last_checked)}`,
-          s.keep_last > 0 ? `keeps latest ${s.keep_last}` : "keeps everything")))),
+        h("div", { class: "hero-meta" }, join(s.kind === "rss" ? "From its podcast feed" : "From YouTube",
+          `checked ${ago(s.last_checked)}`, s.keep_last > 0 ? `keeps latest ${s.keep_last}` : "keeps everything")))),
     feedButtons(s.feed_path, "Open in Podcasts"),
     s.mode === "audio" && s.video_copy ? feedButtons(s.video_feed_path, "Open video feed") : null,
     h("div", { class: "hero-actions" },
@@ -561,7 +561,8 @@ function showHero(s) {
         icon("refresh"), "Check now"),
       h("button", { class: "action", onclick: () => showCommand(s, "download-now", `Downloading ${s.name} now…`) },
         icon("download"), "Download now"),
-      h("a", { class: "action subtle", href: s.source_url, target: "_blank", rel: "noopener" }, icon("external"), "YouTube")));
+      h("a", { class: "action subtle", href: s.source_url, target: "_blank", rel: "noopener" }, icon("external"),
+        s.kind === "rss" ? "Feed" : "YouTube")));
 }
 
 async function showCommand(s, cmd, msg) {
@@ -664,7 +665,7 @@ function episodeRow(e, { withShow = false, when = fmtWhen } = {}) {
           withShow ? h("a", { class: "action subtle", href: e.show_id ? `#/show/${e.show_id}` : "#/singles" },
             icon("chevronRight"), "Go to show") : null,
           h("a", { class: "action subtle", href: e.source_url, target: "_blank", rel: "noopener" },
-            icon("external"), "YouTube"),
+            icon("external"), /youtube\.com|youtu\.be/.test(e.source_url) ? "YouTube" : "Episode page"),
           h("button", { class: "action subtle danger", onclick: (ev) => deleteEpisode(e, ev.currentTarget) },
             icon("trash"), "Delete")))));
 }
@@ -805,7 +806,10 @@ function select(options, value, onchange) {
 function settingsCard(s, w) {
   const confirming = confirmingRemove === s.id;
   return section("Settings", h("div", { class: "settings card" },
-    settingRow("Format", h("div", { class: "segmented small", role: "radiogroup", "aria-label": "Format" },
+    settingRow("Source", h("a", { class: "action subtle", href: `#/add?q=${encodeURIComponent(s.name)}` }, "Change"),
+      s.kind === "rss" ? "Its podcast feed. To switch back, paste the show's YouTube link on the Add page."
+        : "YouTube. To use its podcast feed instead (audio only, no YouTube limits), find it on the Add page."),
+    s.kind === "rss" ? null : settingRow("Format", h("div", { class: "segmented small", role: "radiogroup", "aria-label": "Format" },
       ["audio", "video"].map((m) => h("label", {},
         h("input", {
           type: "radio", name: `mode-${s.id}`, value: m, checked: s.mode === m,
@@ -813,7 +817,7 @@ function settingsCard(s, w) {
         }),
         h("span", {}, m === "audio" ? "Audio" : "Video")))),
       "Applies to episodes downloaded from now on."),
-    s.mode === "audio" ? settingRow("Also download video",
+    s.mode === "audio" && s.kind !== "rss" ? settingRow("Also download video",
       toggle(!!s.video_copy, (on) => patchShow(s, { video_copy: on },
         on ? `Downloading ${s.name} as video too` : "Video copies off"), "Also download video"),
       "Adds a separate video feed alongside the audio one.") : null,
@@ -911,7 +915,7 @@ const add = { url: "", shared: null, busy: false, result: null, error: null, epM
 
 function addView(params) {
   // A link from the "Share to Wren" shortcut: look it up straight away.
-  const shared = params.get("url");
+  const shared = params.get("url") || params.get("q");
   if (shared && shared !== add.shared) {
     add.shared = shared;
     add.url = shared;
@@ -922,7 +926,7 @@ function addView(params) {
     h("form", { class: "card add-form", onsubmit: (e) => { e.preventDefault(); lookup(); } },
       h("div", { class: "input-row" },
         h("input", {
-          id: "add-url", type: "url", value: add.url, placeholder: "YouTube channel, playlist or video",
+          id: "add-url", type: "text", value: add.url, placeholder: "YouTube link, podcast feed or show name",
           autocomplete: "off", autocapitalize: "off", spellcheck: "false",
           oninput: (e) => { add.url = e.target.value; },
         }),
@@ -978,27 +982,64 @@ function backfillPicker(state, name) {
 // Each show offered keeps its own format and backfill choice.
 const subChoice = (url) => (add.subs[url] ??= { mode: "audio", backfill: 3 });
 
-function subscribeBlock(url, name, subscribed) {
+function subscribeBlock(url, name, subscribed, { audioOnly = false, sameShow = [], podcastFeed = false } = {}) {
   if (subscribed) {
     return h("a", { class: "row subscribed", href: `#/show/${subscribed.id}` },
       icon("check"), h("span", { class: "row-text" }, `Already subscribed to ${subscribed.name}`),
       h("span", { class: "chev" }, icon("chevronRight")));
   }
   const choice = subChoice(url);
+  if (audioOnly) choice.mode = "audio";
+  // Following the same show from YouTube and its feed would download every
+  // episode twice: offer to move the existing show over instead.
+  const switches = sameShow.map((s) => h("div", { class: "switch-offer" },
+    h("p", {}, `You follow ${s.name} from ${s.kind === "rss" ? "its podcast feed" : "YouTube"}. Switch it to `
+      + `${podcastFeed ? "this podcast feed" : "YouTube"}? It keeps its episodes, settings and feed in Podcasts.`),
+    h("button", { class: "primary", onclick: (e) => switchSource(s, url, e.currentTarget) },
+      `Switch ${s.name} to ${podcastFeed ? "the podcast feed" : "YouTube"}`)));
   return h("div", { class: "choice" },
-    h("div", { class: "field-label" }, "Format"), modePicker(choice, "mode", `mode-${url}`),
+    ...switches,
+    // The rest is for adding it as a new show, which a switch makes unusual.
+    switches.length ? h("div", { class: "field-label or" }, "Or add it as a separate show") : null,
+    audioOnly ? null : [h("div", { class: "field-label" }, "Format"), modePicker(choice, "mode", `mode-${url}`)],
     h("div", { class: "field-label" }, "Download the latest"), backfillPicker(choice, `backfill-${url}`),
-    h("button", { class: "primary", onclick: (e) => subscribe(url, name, e.currentTarget) }, `Subscribe to ${name}`));
+    h("button", { class: switches.length ? "button full" : "primary", onclick: (e) => subscribe(url, name, e.currentTarget) },
+      switches.length ? "Add as a separate show" : `Subscribe to ${name}`));
+}
+
+async function switchSource(show, url, btn) {
+  btn.disabled = true;
+  try {
+    const updated = await api(`/api/shows/${show.id}/source`, { method: "POST", body: { url } });
+    toast(`${updated.name} now comes from ${updated.kind === "rss" ? "its podcast feed" : "YouTube"}. New episodes download from there.`, 5000);
+    Object.assign(add, { url: "", result: null, error: null, subs: {} });
+    navigate(`#/show/${show.id}`);
+  } catch (err) {
+    btn.disabled = false;
+    toast(`Couldn't switch: ${err.message}`, 6000);
+  }
 }
 
 function resultView(r) {
+  if (r.kind === "search") {
+    return section("Podcasts", r.results.length
+      ? h("ul", { class: "card list-card" }, r.results.map((p) => h("li", {},
+        h("button", { class: "row", onclick: () => { add.url = p.feed_url; lookup(); } },
+          art(p.image),
+          h("span", { class: "row-text" },
+            h("span", { class: "row-title" }, p.title),
+            h("span", { class: "row-meta" }, join(p.author, p.subscribed ? "Following" : null))),
+          h("span", { class: "chev" }, icon("chevronRight"))))))
+      : h("p", { class: "none card" }, `No podcasts found for “${r.query}”. Paste a YouTube link or a feed address instead.`));
+  }
   if (r.kind === "show") {
-    return section("Show", h("div", { class: "card result" },
+    const podcastFeed = r.source === "rss";
+    return section(podcastFeed ? "Podcast feed" : "Show", h("div", { class: "card result" },
       h("div", { class: "result-title" }, r.title),
       r.latest.length ? h("ul", { class: "preview" }, r.latest.map((i) => h("li", {},
         h("span", { class: "preview-title" }, i.title),
         h("span", { class: "preview-meta" }, i.live ? "Live" : fmtDuration(i.duration) || "")))) : null,
-      subscribeBlock(r.url, r.title, r.subscribed)));
+      subscribeBlock(r.url, r.title, r.subscribed, { audioOnly: podcastFeed, sameShow: r.same_show || [], podcastFeed })));
   }
   return h("div", { class: "results" },
     section("Episode", h("div", { class: "card result" },

@@ -210,6 +210,25 @@ def unsubscribe(show_id: int):
     return Response(status_code=204)
 
 
+class SourceChange(BaseModel):
+    url: str
+
+
+@app.post("/api/shows/{show_id}/source")
+def switch_source(show_id: int, req: SourceChange):
+    """Follow the show through another source (its podcast feed, or YouTube) from now on."""
+    try:
+        show = subscriptions.switch_source(show_id, req.url)
+    except KeyError:
+        raise HTTPException(404, "no such show")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:  # network trouble loading the new source
+        raise HTTPException(502, f"couldn't load that: {str(e).splitlines()[0][:200]}")
+    background.refresh(show_id)
+    return show
+
+
 @app.post("/api/shows/{show_id}/refresh", status_code=202)
 def refresh_show(show_id: int):
     if not subscriptions.get_show(show_id):

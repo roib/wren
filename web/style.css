@@ -529,6 +529,11 @@ main { margin-top: 16px; }
 .setting-label { font-size: 15px; }
 .setting-hint { margin: 6px 0 0; color: var(--muted); font-size: 13px; line-height: 1.4; }
 .page-note { margin: 14px 4px 0; color: var(--muted); font-size: 13px; line-height: 1.4; }
+/* Add page: offer to move a show already followed from the other source. */
+.switch-offer { margin-bottom: 14px; }
+.switch-offer p { margin: 0 0 8px; font-size: 14px; line-height: 1.4; }
+.field-label.or { margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--line); }
+button.row { width: 100%; text-align: left; background: none; border: 0; font: inherit; color: inherit; }
 
 /* When an episode was downloaded: in Recent rows, and in an opened row. */
 .when { white-space: nowrap; }

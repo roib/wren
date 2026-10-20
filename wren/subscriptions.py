@@ -10,7 +10,7 @@ import random
 import re
 import time
 
-from . import artwork, db, downloader, feeds, push, transcribe
+from . import artwork, db, downloader, feeds, podcasts, push, transcribe
 from .config import DOWNLOAD_PAUSE, MAX_ATTEMPTS, MEDIA_DIR
 
 log = logging.getLogger("wren")
@@ -55,25 +55,42 @@ def get_show(show_id: int) -> dict | None:
     return dict(row) if row else None
 
 
+def source_kind(url: str) -> str:
+    """"rss" for a podcast feed or Apple Podcasts link, "youtube" otherwise."""
+    return "rss" if podcasts.is_feed_url(url) else "youtube"
+
+
+def _feed_url_for(kind: str, url: str) -> str:
+    return podcasts.feed_url_for(url) if kind == "rss" else feeds.feed_url_for(url)
+
+
+def _fetch(kind: str, feed_url: str) -> feeds.Feed:
+    return podcasts.fetch(feed_url) if kind == "rss" else feeds.fetch(feed_url)
+
+
 def subscribe(url: str, mode: str = "audio", keep_last: int = 10, backfill: int = 3,
               min_duration: int = 300, title_filter: str | None = None) -> dict:
-    """Add a show. Its newest `backfill` episodes are queued; older ones are ignored."""
+    """Add a show, from YouTube or its podcast feed. Its newest `backfill`
+    episodes are queued; older ones are ignored."""
     if mode not in ("audio", "video"):
         raise ValueError("mode must be 'audio' or 'video'")
     _check_regex(title_filter)  # fail now rather than on every sync
+    kind = source_kind(url)
+    if kind == "rss" and mode == "video":
+        raise ValueError("podcast feeds are audio only; follow the show on YouTube for video")
 
-    feed_url = feeds.feed_url_for(url)
+    feed_url = _feed_url_for(kind, url)
     with db.connect() as conn:
         if conn.execute("SELECT 1 FROM shows WHERE feed_url = ?", (feed_url,)).fetchone():
             raise ValueError("already subscribed to this show")
 
-    feed = feeds.fetch(feed_url)
+    feed = _fetch(kind, feed_url)
     with db.connect() as conn:
         cur = conn.execute(
             """INSERT INTO shows (name, kind, source_url, feed_url, mode, keep_last,
                                   min_duration, title_filter, last_checked, created_at)
-               VALUES (?, 'youtube', ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (feed.title or url, url, feed_url, mode, keep_last, min_duration,
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (feed.title or url, kind, url, feed_url, mode, keep_last, min_duration,
              title_filter, _now(), _now()),
         )
         show_id = cur.lastrowid
@@ -106,6 +123,9 @@ def update_show(show_id: int, **fields) -> dict:
         raise ValueError(f"can't change {', '.join(sorted(unknown))}")
     if "mode" in fields and fields["mode"] not in ("audio", "video"):
         raise ValueError("mode must be 'audio' or 'video'")
+    current = get_show(show_id)
+    if current and current["kind"] == "rss" and (fields.get("mode") == "video" or fields.get("video_copy")):
+        raise ValueError("podcast feeds are audio only; switch the show to YouTube for video")
     _check_regex(fields.get("title_filter"))
     for flag in ("enabled", "video_copy", "skip_sponsors"):
         if flag in fields:
@@ -122,6 +142,34 @@ def update_show(show_id: int, **fields) -> dict:
     if "keep_last" in fields:
         _apply_retention(show)
     return show
+
+
+def switch_source(show_id: int, url: str) -> dict:
+    """Follow a show through another source (its podcast feed, or YouTube) from
+    now on. Its settings, episodes and Wren feed stay; everything already in the
+    new source counts as seen, so nothing is downloaded twice."""
+    show = get_show(show_id)
+    if show is None:
+        raise KeyError(show_id)
+    kind = source_kind(url)
+    feed_url = _feed_url_for(kind, url)
+    with db.connect() as conn:
+        other = conn.execute("SELECT name FROM shows WHERE feed_url = ? AND id != ?", (feed_url, show_id)).fetchone()
+    if other:
+        raise ValueError(f"{other['name']} already follows that")
+    feed = _fetch(kind, feed_url)
+    with db.connect() as conn:
+        conn.execute("""UPDATE shows SET kind = ?, source_url = ?, feed_url = ?, last_checked = ?, last_error = NULL,
+                        mode = CASE WHEN ? = 'rss' THEN 'audio' ELSE mode END,
+                        video_copy = CASE WHEN ? = 'rss' THEN 0 ELSE video_copy END WHERE id = ?""",
+                     (kind, url, feed_url, _now(), kind, kind, show_id))
+        # What's still queued from the old source isn't wanted any more.
+        conn.execute("UPDATE feed_items SET status = 'skipped', error = 'source changed' WHERE show_id = ? "
+                     "AND status = 'queued'", (show_id,))
+        for item in reversed(feed.items):
+            _insert_item(conn, show_id, item, "from before the switch")
+    log.info("%s now follows %s (%s)", show["name"], feed_url, kind)
+    return get_show(show_id)
 
 
 def requeue_item(show_id: int, item_id: str) -> bool:
@@ -171,7 +219,7 @@ def _insert_item(conn, show_id: int, item: feeds.FeedItem, skip_reason: str | No
 def _check_feed(show: dict) -> int:
     """Fetch a show's feed and queue items not seen before. Returns how many were queued."""
     try:
-        feed = feeds.fetch(show["feed_url"])
+        feed = _fetch(show["kind"], show["feed_url"])
     except Exception as e:
         with db.connect() as conn:
             conn.execute("UPDATE shows SET last_checked = ?, last_error = ? WHERE id = ?",
@@ -256,8 +304,12 @@ def _try_download(show: dict, item: dict) -> bool:
 
     log.info("%s: downloading %s", show["name"], item["title"])
     try:
-        downloader.download(item["url"], show["mode"], show_id=show["id"],
-                            min_duration=show["min_duration"], hold_for_sponsors=bool(show["skip_sponsors"]))
+        if show["kind"] == "rss":
+            podcasts.download(show["feed_url"], item["item_id"], show["id"],
+                              hold_for_sponsors=bool(show["skip_sponsors"]))
+        else:
+            downloader.download(item["url"], show["mode"], show_id=show["id"],
+                                min_duration=show["min_duration"], hold_for_sponsors=bool(show["skip_sponsors"]))
     except downloader.Skipped as e:
         if str(e) == "upcoming":
             # Premiere hasn't aired yet; keep it queued and look again later.
@@ -317,15 +369,18 @@ def _download_queue(show: dict) -> int:
     return done
 
 
-def download_next(show_ids: list[int] | None = None) -> bool:
-    """Download the oldest queued item that's due, across all enabled shows
-    (or only the given ones). Returns False when there was nothing to do."""
+def download_next(show_ids: list[int] | None = None, kinds: tuple[str, ...] = ("youtube", "rss")) -> str | bool:
+    """Download the oldest queued item that's due, across all enabled shows of
+    the given kinds (or only the given shows). Returns the kind of show it was
+    for ("youtube" ones need pacing), or False when there was nothing to do."""
     now = _now()
     only = ""
     params: list = [now]
     if show_ids is not None:
         only = f" AND s.id IN ({','.join('?' * len(show_ids))})" if show_ids else " AND 0"
         params += list(show_ids)
+    only += f" AND s.kind IN ({','.join('?' * len(kinds))})" if kinds else " AND 0"
+    params += list(kinds)
     with db.connect() as conn:
         row = conn.execute(
             f"""SELECT f.*, s.id AS sid FROM feed_items f JOIN shows s ON s.id = f.show_id
@@ -341,7 +396,7 @@ def download_next(show_ids: list[int] | None = None) -> bool:
         show = dict(conn.execute("SELECT * FROM shows WHERE id = ?", (row["sid"],)).fetchone())
     if claimed:
         _download_item(show, dict(row))
-    return True
+    return show["kind"]
 
 
 # ---- video copies -----------------------------------------------------------------
@@ -362,7 +417,8 @@ def _missing_copy(show_ids: list[int] | None) -> tuple[dict, dict] | None:
         rows = conn.execute(
             f"""SELECT e.video_id, e.title, e.source_url, s.id AS sid FROM episodes e
                 JOIN shows s ON s.id = e.show_id
-                WHERE e.mode = 'audio' AND s.mode = 'audio' AND s.video_copy = 1 AND s.enabled = 1{only}
+                WHERE e.mode = 'audio' AND s.mode = 'audio' AND s.video_copy = 1 AND s.enabled = 1
+                  AND s.kind = 'youtube'{only}
                   AND NOT EXISTS (SELECT 1 FROM episodes v WHERE v.video_id = e.video_id AND v.mode = 'video')
                 ORDER BY e.upload_date DESC, e.added_at DESC""", params).fetchall()
         now = _now()

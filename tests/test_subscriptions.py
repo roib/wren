@@ -36,7 +36,7 @@ def test_subscribe_validates(fake_feeds):
         subscriptions.subscribe(SHOW, mode="mp3")
     with pytest.raises(ValueError, match="title filter"):
         subscriptions.subscribe(SHOW, title_filter="(")
-    with pytest.raises(ValueError, match="only YouTube"):
+    with pytest.raises((ValueError, OSError)):  # not a podcast feed, nor reachable
         subscriptions.subscribe("https://example.com/feed")
 
 

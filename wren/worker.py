@@ -347,6 +347,13 @@ class Worker:
                 self._schedule_next_poll()
             return True
 
+        # Podcast-feed episodes come straight from the podcast's host: none of the
+        # YouTube pacing (active hours, gaps, the hourly cap, pauses) applies.
+        if subscriptions.download_next(kinds=("rss",)):
+            self.activity = "downloading"
+            self._process_wake.set()  # it may be one to cut
+            return True
+
         if now < self.paused_until:
             self.activity = "paused"
             return False
@@ -373,7 +380,7 @@ class Worker:
                 return False
             # Outside active hours with only some shows requested, stick to those.
             only = None if (active or self.override_all) else sorted(self.override_shows)
-            if subscriptions.download_next(only) or subscriptions.download_next_copy(only):
+            if subscriptions.download_next(only, kinds=("youtube",)) or subscriptions.download_next_copy(only):
                 self._process_wake.set()  # it may be one to cut
                 self._recent.append(now)
                 self.next_download_at = time.time() + subscriptions.pause_seconds()

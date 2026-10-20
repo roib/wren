@@ -19,6 +19,7 @@ three-pane desktop layout.
 | `wren/server.py` | FastAPI app: JSON API (`/api/...`), feeds (`/feeds/...`), media (`/media/...`), static app (`web/`) |
 | `wren/worker.py` | The single background thread: feed checks, downloads, pacing, rate-limit pauses, daily health checks |
 | `wren/subscriptions.py` | Shows and feed items: subscribe, check a feed, download queue, video copies, retention, delete |
+| `wren/podcasts.py` | Shows from their own podcast feed (RSS): parsing, Apple Podcasts lookup/search, plain HTTP downloads; ids `pod` + hash of the guid |
 | `wren/feeds.py` | Show listings via yt-dlp flat playlist extraction (channels → their `UU…` uploads playlist) |
 | `wren/sponsors.py` | Sponsor reads: SponsorBlock lookup (hash prefix), lossless ffmpeg cut, the once-only processing of held-back episodes |
 | `wren/transcribe.py` | Whisper (faster-whisper) transcripts with word times; optional, in the container; transcripts kept 14 days |
@@ -94,6 +95,13 @@ three-pane desktop layout.
 - **faster-whisper's own audio decoding (PyAV)** broke on a version mismatch;
   `transcribe.py` decodes with ffmpeg instead. Keep faster-whisper and
   anthropic pinned in the Containerfile, and the model baked into the image.
+- **One source per show.** A show follows YouTube *or* its podcast feed
+  (`shows.kind`), never both: the two give different ids for the same episode
+  and can't be matched reliably. Switching (`switch_source`) marks everything
+  already in the new source as seen. Podcast feeds are audio only; their
+  downloads skip all YouTube pacing; their ads are mostly inserted per
+  download and found only in the transcript (SponsorBlock is YouTube-only).
+  Some feeds are short (Hard Fork lists 3 entries): that's the feed, not a bug.
 - **Apple Podcasts** won't follow an empty feed (hence the placeholder item),
   caches artwork (artwork URLs carry `?v=<mtime>`), and opens `podcast://` links
   with "Follow a Show by URL" filled in.
