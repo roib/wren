@@ -649,7 +649,10 @@ function episodeRow(e, { withShow = false, when = fmtWhen } = {}) {
         h("span", { class: "ep-meta" },
           h("span", { class: "badges" }, e.copies.map((c) => badge(c.mode)),
             e.copy_pending ? h("span", { class: "badge muted" }, "Video soon") : null,
-            e.sponsors?.state === "pending" ? h("span", { class: "badge muted" }, "Not in feed yet") : null),
+            e.sponsors?.state === "pending" ? h("span", { class: "badge muted" }, "Not in feed yet") : null,
+            // Processed, and something was cut (checked with nothing found gets no badge).
+            e.sponsors?.state === "done" && e.sponsors.removed > 0
+              ? h("span", { class: "badge cut", title: `${length(e.sponsors.removed)} removed` }, icon("check"), "Ads removed") : null),
           withShow
             ? h("span", {}, `${e.show} · `, h("span", { class: "when" }, icon("download"), when(e.added_at)),
               [fmtDuration(e.duration), fmtBytes(size)].filter(Boolean).map((x) => ` · ${x}`).join(""))

@@ -210,6 +210,8 @@ def test_sponsor_cuts_table(phone, show):
                      "sponsor_cuts = ? WHERE video_id = 'e1'",
                      (json.dumps([[c["start"], c["end"]] for c in cuts]), json.dumps({"cuts": cuts, "note": None})))
     phone.goto(f"/#/show/{show['id']}")
+    playwright.expect(phone.locator(".ep", has_text="Episode e1").locator(".badge.cut")).to_have_text("Ads removed")
+    playwright.expect(phone.locator(".ep", has_text="Episode e2").locator(".badge.cut")).to_have_count(0)
     phone.locator(".ep-head", has_text="Episode e1").tap()
     table = phone.locator(".ep.open .cuts")
     playwright.expect(table.locator(".cuts-head")).to_have_text("Removed 2 sponsor reads and the intro · 2m 26s in all")

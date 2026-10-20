@@ -286,6 +286,9 @@ main { margin-top: 16px; }
 }
 .badge.video { background: var(--fg); border-color: var(--fg); color: var(--bg); }
 .badge.muted { border-style: dashed; color: var(--faint); }
+/* Ads were cut out of this episode: the "OK" green, so it reads apart from the format badges. */
+.badge.cut { color: var(--ok); border-color: var(--ok); display: inline-flex; align-items: center; gap: 2px; }
+.badge.cut .ic { width: 10px; height: 10px; stroke-width: 2.6; }
 
 .button {
   display: inline-flex;
