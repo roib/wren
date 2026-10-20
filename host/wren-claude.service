@@ -7,6 +7,9 @@ Description=Answer Wren's ad-read requests with Claude Code
 [Service]
 Type=oneshot
 Environment=WREN_DATA_DIR=/path/to/wren-data
+# Optional: a long-lived token from `claude setup-token`, on the first line of
+# a file only you can read, instead of the interactive login.
+#Environment=CLAUDE_TOKEN_FILE=%h/.config/wren-claude/token
 # Where the Claude Code installer puts `claude`.
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 # Rootless podman: the data folder belongs to the container's user, so run as

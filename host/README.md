@@ -34,6 +34,9 @@ through `podman unshare` (as the container's root, which can). Wren creates
 enabling the units.
 
 1. Install Claude Code (native installer) and log in once: run `claude`, then `/login`.
+   Or, for a credential that lasts longer and is separate from your own
+   login, run `claude setup-token`, save the token in a file only you can read
+   (`chmod 600`), and set `CLAUDE_TOKEN_FILE` to it in `wren-claude.service`.
 2. Install the helper and units, with your data folder (the host side of `/data`)
    in place of `/path/to/wren-data` in `wren-claude.service` and `wren-claude.path`:
 

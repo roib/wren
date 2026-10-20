@@ -15,6 +15,17 @@ dir="$data/ads"
 claude=${CLAUDE:-claude}
 mkdir -p "$dir/requests" "$dir/answers"
 
+# A long-lived token (`claude setup-token`) instead of the interactive login:
+# CLAUDE_TOKEN_FILE names a file holding it on its first line.
+if [ -n "${CLAUDE_TOKEN_FILE:-}" ]; then
+    if ! token=$(head -n 1 "$CLAUDE_TOKEN_FILE" 2>/dev/null | tr -d '[:space:]') || [ -z "$token" ]; then
+        jq -n --arg error "Can't read the Claude token file on the server" \
+            '{at: now | floor, ok: false, error: $error}' > "$dir/helper.json.tmp.$$" && mv "$dir/helper.json.tmp.$$" "$dir/helper.json"
+        exit 0
+    fi
+    export CLAUDE_CODE_OAUTH_TOKEN="$token"
+fi
+
 # One run at a time.
 exec 9>"$dir/.lock"
 flock -n 9 || exit 0

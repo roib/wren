@@ -81,7 +81,9 @@ FAKE_CLAUDE = """#!/bin/sh
 # Stands in for Claude Code: logged in (or not), and answers from a canned reply.
 case "$1" in
   --version) echo "9.9.9 (Claude Code)"; exit 0 ;;
-  auth) [ -e "$FAKE_DIR/logged-out" ] && echo '{"loggedIn": false}' || echo '{"loggedIn": true}'; exit 0 ;;
+  auth) if [ -e "$FAKE_DIR/logged-out" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then echo '{"loggedIn": false}';
+        else echo '{"loggedIn": true}'; fi
+        printf '%s' "${CLAUDE_CODE_OAUTH_TOKEN:-}" > "$FAKE_DIR/token-seen"; exit 0 ;;
 esac
 printf '%s\\n' "$@" > "$FAKE_DIR/args"
 cat > "$FAKE_DIR/stdin"
@@ -101,9 +103,9 @@ def helper(tmp_path):
     claude.chmod(0o755)
     data = tmp_path / "data"
 
-    def run(reply=None):
+    def run(reply=None, **extra_env):
         (fake / "reply").write_text(json.dumps(reply or {}))
-        env = {**os.environ, "CLAUDE": str(claude), "FAKE_DIR": str(fake)}
+        env = {**os.environ, "CLAUDE": str(claude), "FAKE_DIR": str(fake), **extra_env}
         subprocess.run([str(SCRIPT), str(data)], env=env, check=True, timeout=60)
         return json.loads((data / "ads" / "helper.json").read_text())
     return types_namespace(run=run, data=data, fake=fake)
@@ -159,3 +161,17 @@ def test_script_ignores_files_that_arent_requests(helper):
     helper.run({"is_error": False, "structured_output": {"ads": []}})
     assert not bad.exists()
     assert list((helper.data / "ads" / "answers").iterdir()) == []
+
+
+def test_script_uses_a_token_file(helper, tmp_path):
+    (helper.fake / "logged-out").touch()  # no interactive login, only the token
+    token = tmp_path / "claude-token"
+    token.write_text("sk-ant-oat-test-token\nsomething else\n")
+    status = helper.run(CLAUDE_TOKEN_FILE=str(token))
+    assert status["ok"] is True
+    assert (helper.fake / "token-seen").read_text() == "sk-ant-oat-test-token"  # first line only
+
+
+def test_script_reports_an_unreadable_token_file(helper, tmp_path):
+    status = helper.run(CLAUDE_TOKEN_FILE=str(tmp_path / "missing"))
+    assert status["ok"] is False and "token file" in status["error"]
