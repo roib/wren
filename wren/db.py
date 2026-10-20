@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS shows (
     enabled      INTEGER NOT NULL DEFAULT 1,
     video_copy   INTEGER NOT NULL DEFAULT 0,    -- audio show: also download each episode as video
     skip_sponsors INTEGER NOT NULL DEFAULT 0,   -- cut out sponsor reads marked on SponsorBlock
+    skip_intros  INTEGER NOT NULL DEFAULT 0,    -- also the intro and outro (SponsorBlock marks; YouTube shows)
     last_checked INTEGER,
     last_error   TEXT,
     created_at   INTEGER NOT NULL
@@ -132,6 +133,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE shows ADD COLUMN video_copy INTEGER NOT NULL DEFAULT 0")
     if "skip_sponsors" not in cols:
         conn.execute("ALTER TABLE shows ADD COLUMN skip_sponsors INTEGER NOT NULL DEFAULT 0")
+    if "skip_intros" not in cols:
+        conn.execute("ALTER TABLE shows ADD COLUMN skip_intros INTEGER NOT NULL DEFAULT 0")
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(feed_items)")}
     if "next_try" not in cols:
         conn.execute("ALTER TABLE feed_items ADD COLUMN next_try INTEGER NOT NULL DEFAULT 0")

@@ -113,7 +113,8 @@ def subscribe(url: str, mode: str = "audio", keep_last: int = 10, backfill: int 
     return show
 
 
-EDITABLE = {"name", "mode", "keep_last", "min_duration", "title_filter", "enabled", "video_copy", "skip_sponsors"}
+EDITABLE = {"name", "mode", "keep_last", "min_duration", "title_filter", "enabled", "video_copy", "skip_sponsors",
+            "skip_intros"}
 
 
 def update_show(show_id: int, **fields) -> dict:
@@ -127,7 +128,7 @@ def update_show(show_id: int, **fields) -> dict:
     if current and current["kind"] == "rss" and (fields.get("mode") == "video" or fields.get("video_copy")):
         raise ValueError("podcast feeds are audio only; switch the show to YouTube for video")
     _check_regex(fields.get("title_filter"))
-    for flag in ("enabled", "video_copy", "skip_sponsors"):
+    for flag in ("enabled", "video_copy", "skip_sponsors", "skip_intros"):
         if flag in fields:
             fields[flag] = int(bool(fields[flag]))
     if fields:

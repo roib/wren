@@ -83,7 +83,10 @@ three-pane desktop layout.
   With Claude available there's no wait: every episode is transcribed (Whisper
   `base.en`, CPU), Claude Haiku finds the ad reads, and those are cut together
   with any SponsorBlock marks (marks keep their boundaries where they overlap).
-  Don't trust SponsorBlock alone that early: its marks may still be partial. Tested against SponsorBlock on six episodes: 97% of marked time found,
+  Don't trust SponsorBlock alone that early: its marks may still be partial.
+  `skip_intros` adds SponsorBlock's `intro`/`outro` marks (YouTube shows only):
+  a transcript can't find theme music, and guessing an intro from its words
+  risks cutting the conversation that follows. Tested against SponsorBlock on six episodes: 97% of marked time found,
   boundaries within seconds; the one wrong pick was "low" confidence, so only
   "high" is cut. Processing runs in its own thread (`wren-sponsors`), beside
   downloads. `wren ads-check <video_id>` is a dry run for a show.

@@ -161,6 +161,7 @@ class ShowUpdate(BaseModel):
     enabled: bool | None = None
     video_copy: bool | None = None
     skip_sponsors: bool | None = None
+    skip_intros: bool | None = None
 
 
 @app.get("/api/shows")

@@ -187,3 +187,51 @@ def test_feeds_use_the_exact_publish_time():
 def test_ready_time_from_publish():
     assert sponsors.ready_at({"published_at": 100, "added_at": 5}) == 100 + DELAY
     assert time.time() < sponsors.ready_at({"published_at": None, "added_at": time.time()})
+
+
+def test_intro_and_outro_are_cut_when_asked(show, monkeypatch):
+    sponsors._next_try.clear()
+    monkeypatch.setattr(sponsors, "lookup", lambda vid: [(100.0, 160.0)])
+    asked = []
+
+    def categories(vid, cats):
+        asked.append(tuple(cats))
+        return {"intro": [(2.0, 11.0, "intro")], "outro": [(590.0, 600.0, "outro")]}[cats[0]]
+    monkeypatch.setattr(sponsors, "lookup_categories", categories)
+    cuts = []
+    monkeypatch.setattr(sponsors, "cut", lambda path, segs: cuts.append(segs))
+    subscriptions.update_show(show["id"], skip_intros=True)
+    sponsors.process_next(now=2_000_000_000)
+    decided = json.loads(episode()["sponsor_cuts"])["cuts"]
+    assert [(c["start"], c.get("category")) for c in decided] == [(2.0, "intro"), (100.0, None), (590.0, "outro")]
+    assert cuts == [[(2.0, 11.0), (100.0, 160.0), (590.0, 600.0)]]
+    assert episode()["sponsor_removed"] == 79
+
+
+def test_intro_marks_only_when_the_show_asks(show, monkeypatch):
+    sponsors._next_try.clear()
+    monkeypatch.setattr(sponsors, "lookup", lambda vid: [])
+    asked = []
+    monkeypatch.setattr(sponsors, "lookup_categories", lambda vid, cats: asked.append(cats) or [])
+    monkeypatch.setattr(sponsors, "cut", lambda path, segs: None)
+    sponsors.process_next(now=2_000_000_000)
+    assert asked == []  # setting off: not even looked up
+
+
+def test_intro_lookup_failing_keeps_the_intro(show, monkeypatch):
+    sponsors._next_try.clear()
+    monkeypatch.setattr(sponsors, "lookup", lambda vid: [(100.0, 160.0)])
+
+    def down(vid, cats):
+        raise urllib.error.URLError("unreachable")
+    monkeypatch.setattr(sponsors, "lookup_categories", down)
+    monkeypatch.setattr(sponsors, "cut", lambda path, segs: None)
+    subscriptions.update_show(show["id"], skip_intros=True)
+    sponsors.process_next(now=2_000_000_000)
+    assert [c["start"] for c in json.loads(episode()["sponsor_cuts"])["cuts"]] == [100.0]
+
+
+def test_skip_intros_via_api(client, fake_feeds):
+    fake_feeds.set(SHOW, "Test Show", [])
+    s = subscriptions.subscribe(SHOW)
+    assert client.patch(f"/api/shows/{s['id']}", json={"skip_intros": True}).json()["skip_intros"] == 1

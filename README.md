@@ -76,6 +76,8 @@ It also helps with:
     [`host/`](host/README.md)).
   - Without one, new episodes wait until 8 hours after YouTube published them,
     when SponsorBlock's community marks are in, and those are cut.
+  - Optionally also the show's intro and outro (theme, music), where
+    SponsorBlock users have marked them (YouTube shows).
 - **Tidies up.** Keeps the latest N episodes of each show (or everything).
 - **Raises alerts.** Shows problems, and sends Web Push notifications, when
   downloads are paused, an episode fails for good, a show can't be checked

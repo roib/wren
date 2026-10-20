@@ -699,16 +699,24 @@ function sponsorLine(sp) {
 function cutsTable(sp) {
   if (sp?.state !== "done" || !sp.removed || !sp.cuts?.length) return null;
   return h("div", { class: "cuts" },
-    h("div", { class: "cuts-head" }, `Removed ${plural(sp.cuts.length, "sponsor read")} · ${length(sp.removed)} in all`),
+    h("div", { class: "cuts-head" }, `Removed ${cutsSummary(sp.cuts)} · ${length(sp.removed)} in all`),
     h("table", {},
       h("thead", {}, h("tr", {},
         h("th", {}, "Where"), h("th", {}, "Length"), h("th", {}, "Ad"), h("th", {}, "Source"))),
       h("tbody", {}, sp.cuts.map((c) => h("tr", {},
         h("td", { class: "num" }, `${clock(c.start)}–${clock(c.end)}`),
         h("td", { class: "num" }, length(c.end - c.start)),
-        h("td", {}, c.advertiser || "—"),
+        h("td", {}, c.category ? (c.category === "intro" ? "Intro" : "Outro") : c.advertiser || "—"),
         h("td", { class: "src" }, c.source === "transcript" ? "Transcript" : "SponsorBlock"))))),
     h("div", { class: "cuts-note" }, "Times are in the original video."));
+}
+
+// "2 sponsor reads and the intro", "1 sponsor read and the intro and outro", "the intro".
+function cutsSummary(cuts) {
+  const reads = cuts.filter((c) => !c.category).length;
+  const extras = ["intro", "outro"].filter((k) => cuts.some((c) => c.category === k));
+  const parts = [reads ? plural(reads, "sponsor read") : null, extras.length ? `the ${extras.join(" and ")}` : null];
+  return parts.filter(Boolean).join(" and ");
 }
 
 // A length of time that can't be mistaken for a clock time: "44s", "1m 21s", "1h 02m".
@@ -828,6 +836,10 @@ function settingsCard(s, w) {
           + "on SponsorBlock, are cut out before they go into the feed. Episodes already downloaded stay as they are."
         : `New episodes wait until ${w.sponsor_delay_hours} hours after they're published, then the sponsor reads `
           + "SponsorBlock users marked are cut out. Episodes already downloaded stay as they are."),
+    s.skip_sponsors && s.kind !== "rss" ? settingRow("Also cut intro and outro",
+      toggle(!!s.skip_intros, (on) => patchShow(s, { skip_intros: on },
+        on ? "Intros and outros will be cut from new episodes" : "Intros and outros kept"), "Also cut intro and outro"),
+      "The show's opening and closing (theme, music), where SponsorBlock users have marked them.") : null,
     settingRow("Check for new episodes", toggle(!!s.enabled, (on) => patchShow(s, { enabled: on },
       on ? `Checking ${s.name} again` : `Paused ${s.name}`), "Check for new episodes")),
     settingRow("Keep", select(KEEP_OPTIONS, s.keep_last, (v) => patchShow(s, { keep_last: v }, "Saved"))),

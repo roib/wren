@@ -65,8 +65,13 @@ def ready_at(ep: dict) -> int:
 def lookup(video_id: str) -> list[tuple[float, float]]:
     """The video's sponsor segments as (start, end) seconds. [] if none are
     marked; raises if SponsorBlock can't be reached."""
+    return [(a, b) for a, b, _ in lookup_categories(video_id, CATEGORIES)]
+
+
+def lookup_categories(video_id: str, categories: list[str]) -> list[tuple[float, float, str]]:
+    """The video's segments in the given SponsorBlock categories, as (start, end, category)."""
     prefix = hashlib.sha256(video_id.encode()).hexdigest()[:4]
-    url = API + prefix + "?" + urllib.parse.urlencode({"categories": json.dumps(CATEGORIES)})
+    url = API + prefix + "?" + urllib.parse.urlencode({"categories": json.dumps(categories)})
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
         with urllib.request.urlopen(req, timeout=20) as res:
@@ -76,8 +81,25 @@ def lookup(video_id: str) -> list[tuple[float, float]]:
             return []
         raise
     video = next((v for v in videos if v.get("videoID") == video_id), None)
-    return [tuple(s["segment"]) for s in (video or {}).get("segments", [])
+    return [(*s["segment"], s.get("category", "sponsor")) for s in (video or {}).get("segments", [])
             if s.get("actionType", "skip") == "skip"]
+
+
+EXTRA_CATEGORIES = ["intro", "outro"]  # for shows that also cut their intro and outro
+
+
+def _intro_marks(ep: dict) -> list[dict]:
+    """The intro and outro marked on SponsorBlock, for shows set to cut them."""
+    with db.connect() as conn:
+        row = conn.execute("SELECT skip_intros, kind FROM shows WHERE id = ?", (ep.get("show_id"),)).fetchone()
+    if not row or not row["skip_intros"] or row["kind"] != "youtube":
+        return []
+    out = []
+    for category in EXTRA_CATEGORIES:
+        spans = [(a, b) for a, b, c in lookup_categories(ep["video_id"], [category]) if c == category]
+        out += [{"start": round(a, 1), "end": round(b, 1), "source": "sponsorblock", "category": category}
+                for a, b in merge(spans, ep.get("duration"))]
+    return out
 
 
 def merge(segments: list[tuple[float, float]], duration: float | None) -> list[tuple[float, float]]:
@@ -154,8 +176,12 @@ def decide(ep: dict) -> dict:
         log.warning("SponsorBlock unreachable; using the transcript for %s", ep["title"])
         marked = []
     marks = [{"start": round(a, 1), "end": round(b, 1), "source": "sponsorblock"} for a, b in marked]
+    try:
+        extras = _intro_marks(ep)
+    except Exception:
+        extras = []  # SponsorBlock trouble: keep the intro rather than hold the episode
     if mode() != "transcript":
-        return {"cuts": marks, "note": None}
+        return {"cuts": sorted(marks + extras, key=lambda c: c["start"]), "note": None}
     transcript = transcribe.load(ep["video_id"])
     if transcript is None:
         _step(ep, "transcribing")
@@ -166,7 +192,7 @@ def decide(ep: dict) -> dict:
     found, note = ads.choose(ads.ask_claude(transcript, ep["title"], ep["video_id"]), transcript, ep.get("duration"))
     if note:
         log.warning("%s: %s", ep["title"], note)
-    return {"cuts": combine(marks, found), "note": note}
+    return {"cuts": sorted(combine(marks, found) + extras, key=lambda c: c["start"]), "note": note}
 
 
 def combine(marks: list[dict], found: list[dict]) -> list[dict]:
