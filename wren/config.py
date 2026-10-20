@@ -6,6 +6,8 @@ ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.environ.get("WREN_DATA", ROOT / "data"))
 MEDIA_DIR = DATA_DIR / "media"
 DB_PATH = DATA_DIR / "wren.db"
+# Audiobooks to add as shows (.m4b files, or a folder of parts per book).
+BOOKS_DIR = Path(os.environ.get("WREN_BOOKS", DATA_DIR / "books"))
 WEB_DIR = Path(os.environ.get("WREN_WEB", ROOT / "web"))
 
 MAX_HEIGHT = int(os.environ.get("WREN_MAX_HEIGHT", "720"))

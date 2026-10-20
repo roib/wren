@@ -49,6 +49,12 @@ It also helps with:
   search by name. Downloads are plain and quick, with none of YouTube's limits.
   A show has one source at a time; switching keeps its episodes, settings and
   feed in Podcasts, and nothing already released is downloaded again.
+- **And audiobooks.** Put a DRM-free `.m4b` (or a folder of its parts) in the
+  `books` folder inside `WREN_DATA`, and add it from the Add page. The book
+  becomes a show of its own and each chapter an episode. The chapters come from
+  the file's own chapter marks and are cut out without re-encoding. The feed is
+  serial, so Podcasts lists the book from its first chapter, and every chapter
+  is kept. Once a book is added, its original files can be deleted.
 - **Downloads in podcast-friendly formats.** Audio is AAC (`.m4a`), kept as
   YouTube serves it. Video is H.264/AAC MP4, up to 720p by default.
 - **Publishes podcast feeds.** Each show has a feed at `/feeds/<show>.xml`.
@@ -175,6 +181,7 @@ Wren is configured with environment variables:
 | Variable | Default | Meaning |
 |---|---|---|
 | `WREN_DATA` | `./data` (`/data` in the container) | Database, media, artwork and the push key |
+| `WREN_BOOKS` | `WREN_DATA/books` | Folder of audiobooks to add (`.m4b`, `.m4a` or `.mp3` files, or a folder of parts per book) |
 | `WREN_TZ` | `America/Los_Angeles` | Time zone for active hours |
 | `WREN_ACTIVE_HOURS` | `5-23` | Hours when shows are checked and downloaded (`22-6` wraps past midnight, `0-24` is always) |
 | `WREN_POLL_MINUTES` | `120` | How often shows are checked (±15 min) |

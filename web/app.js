@@ -178,6 +178,7 @@ function badge(mode) {
 
 // AUDIO, VIDEO, or AUDIO + VIDEO when an audio show also gets video copies.
 function showBadges(s) {
+  if (s.kind === "book") return h("span", { class: "badges" }, h("span", { class: "badge" }, "Book"));
   return h("span", { class: "badges" },
     s.mode === "video" ? badge("video") : badge("audio"),
     s.mode === "audio" && s.video_copy ? badge("video") : null,
@@ -223,6 +224,7 @@ async function load() {
     else if (r.name === "singles") jobs.push(api("/api/singles").then((d) => details.set("singles", d)));
     else if (r.name === "recent") jobs.push(api("/api/recent").then((d) => details.set("recent", d)));
     else if (r.name === "status") jobs.push(api("/api/activity").then((a) => { activity = a; }));
+    else if (r.name === "add") jobs.push(api("/api/books").then((b) => { bookList = b.books; }));
     else if (r.name === "alerts") {
       jobs.push(api("/api/alerts").then(async (a) => { alertList = a; if (!pushState) await loadPushState(); }));
     }
@@ -519,7 +521,8 @@ function showRow(s) {
       h("span", { class: "row-text" },
         h("span", { class: "row-title" }, s.name),
         h("span", { class: "row-meta" }, showBadges(s),
-          h("span", {}, join(plural(s.episodes, "episode"), fmtDate(s.newest_date), fmtBytes(s.bytes)))),
+          h("span", {}, join(plural(s.episodes, s.kind === "book" ? "chapter" : "episode"),
+            s.kind === "book" ? null : fmtDate(s.newest_date), fmtBytes(s.bytes)))),
         showStatus(s)),
       h("span", { class: "chev" }, icon("chevronRight"))));
 }
@@ -546,6 +549,7 @@ function feedButtons(path, label) {
 }
 
 function showHero(s) {
+  if (s.kind === "book") return bookHero(s);
   return h("div", { class: "hero card" },
     h("div", { class: "hero-top" },
       art(s.art_url, "hero-art"),
@@ -563,6 +567,22 @@ function showHero(s) {
         icon("download"), "Download now"),
       h("a", { class: "action subtle", href: s.source_url, target: "_blank", rel: "noopener" }, icon("external"),
         s.kind === "rss" ? "Feed" : "YouTube")));
+}
+
+// A book doesn't get new episodes: no checks, no YouTube. Reading its folder
+// again picks up a part added later.
+function bookHero(s) {
+  return h("div", { class: "hero card" },
+    h("div", { class: "hero-top" },
+      art(s.art_url, "hero-art"),
+      h("div", { class: "hero-info" },
+        showBadges(s),
+        s.author ? h("div", { class: "hero-meta" }, `By ${s.author}`) : null,
+        h("div", { class: "hero-meta" }, join(plural(s.episodes, "chapter"), fmtBytes(s.bytes))))),
+    feedButtons(s.feed_path, "Open in Podcasts"),
+    h("div", { class: "hero-actions" },
+      h("button", { class: "action", onclick: () => showCommand(s, "refresh", `Reading ${s.name}’s files again…`) },
+        icon("refresh"), "Look for new parts")));
 }
 
 async function showCommand(s, cmd, msg) {
@@ -668,7 +688,7 @@ function episodeRow(e, { withShow = false, when = fmtWhen } = {}) {
             icon("play"), e.copies.length > 1 ? (c.mode === "video" ? "Video" : "Audio") : "Play")),
           withShow ? h("a", { class: "action subtle", href: e.show_id ? `#/show/${e.show_id}` : "#/singles" },
             icon("chevronRight"), "Show") : null,
-          h("a", { class: "action subtle", href: e.source_url, target: "_blank", rel: "noopener" },
+          e.source_url.startsWith("book:") ? null : h("a", { class: "action subtle", href: e.source_url, target: "_blank", rel: "noopener" },
             icon("external"), /youtube\.com|youtu\.be/.test(e.source_url) ? "YouTube" : "Web page"),
           h("button", { class: "action subtle danger", onclick: (ev) => deleteEpisode(e, ev.currentTarget) },
             icon("trash"), "Delete")))));
@@ -836,6 +856,13 @@ function select(options, value, onchange) {
 
 function settingsCard(s, w) {
   const confirming = confirmingRemove === s.id;
+  if (s.kind === "book") {
+    return section("Settings", h("div", { class: "settings card" },
+      settingRow("Keep", h("span", { class: "setting-value" }, "Every chapter"),
+        "Removing the book deletes its chapters from Wren; its files in the books folder stay."),
+      h("button", { class: `remove${confirming ? " confirm" : ""}`, onclick: () => removeShow(s) },
+        confirming ? "Tap again to remove" : "Remove book")));
+  }
   return section("Settings", h("div", { class: "settings card" },
     settingRow("Source", h("a", { class: "action subtle", href: `#/add?q=${encodeURIComponent(s.name)}` }, "Change"),
       s.kind === "rss" ? "Its podcast feed. To switch back, paste the show's YouTube link on the Add page."
@@ -888,7 +915,7 @@ async function removeShow(s) {
   confirmingRemove = null;
   try {
     await api(`/api/shows/${s.id}`, { method: "DELETE" });
-    toast(`Removed ${s.name}. Its episodes moved to Single episodes.`, 5000);
+    toast(s.kind === "book" ? `Removed ${s.name}.` : `Removed ${s.name}. Its episodes moved to Single episodes.`, 5000);
     navigate("#/");
   } catch (err) {
     toast(`Couldn't remove: ${err.message}`);
@@ -947,6 +974,7 @@ function recentView(d) {
 // ---- add ------------------------------------------------------------------------
 
 const add = { url: "", shared: null, busy: false, result: null, error: null, epMode: "audio", subs: {} };
+let bookList = []; // what's in the server's books folder
 
 function addView(params) {
   // A link from the "Share to Wren" shortcut: look it up straight away.
@@ -969,6 +997,7 @@ function addView(params) {
       h("button", { type: "submit", class: "primary", disabled: add.busy }, add.busy ? "Looking up…" : "Look up")),
     add.error ? banner(add.error) : null,
     add.result ? resultView(add.result) : null,
+    add.result ? null : booksSection(),
     bookmarklet(),
     shareHelp());
 }
@@ -1061,7 +1090,59 @@ async function switchSource(show, url, btn) {
   }
 }
 
+// Audiobooks put in the books folder on the server, ready to add.
+function booksSection() {
+  if (!bookList.length) return null;
+  return section("Books folder", h("ul", { class: "card list-card" }, bookList.map((b) => h("li", {},
+    b.added
+      ? h("a", { class: "row", href: `#/show/${b.added.id}` },
+        h("span", { class: "row-text" }, h("span", { class: "row-title" }, b.name),
+          h("span", { class: "row-meta" }, join("Added", b.parts > 1 ? plural(b.parts, "file") : null, fmtBytes(b.bytes)))),
+        h("span", { class: "chev" }, icon("chevronRight")))
+      : h("button", { class: "row", onclick: () => { add.url = b.source; lookup(); } },
+        h("span", { class: "row-text" }, h("span", { class: "row-title" }, b.name),
+          h("span", { class: "row-meta" }, join(b.parts > 1 ? plural(b.parts, "file") : null, fmtBytes(b.bytes)))),
+        h("span", { class: "chev" }, icon("chevronRight")))))));
+}
+
+const PREVIEW_CHAPTERS = 5;
+
+function bookResult(r) {
+  const more = r.chapters.length - PREVIEW_CHAPTERS;
+  return section("Book", h("div", { class: "card result" },
+    h("div", { class: "result-video" },
+      art(r.thumb_url, "result-thumb"),
+      h("div", { class: "row-text" },
+        h("div", { class: "result-title" }, r.title),
+        h("div", { class: "row-meta" }, join(r.author, plural(r.chapters.length, "chapter"), fmtDuration(r.duration))))),
+    h("ul", { class: "preview" }, r.chapters.slice(0, PREVIEW_CHAPTERS).map((c) => h("li", {},
+      h("span", { class: "preview-title" }, c.title),
+      h("span", { class: "preview-meta" }, fmtDuration(c.duration) || ""))),
+      more > 0 ? h("li", {}, h("span", { class: "preview-title" }, `and ${plural(more, "more chapter")}`)) : null),
+    r.subscribed
+      ? h("a", { class: "row subscribed", href: `#/show/${r.subscribed.id}` },
+        icon("check"), h("span", { class: "row-text" }, `Already added as ${r.subscribed.name}`),
+        h("span", { class: "chev" }, icon("chevronRight")))
+      : h("button", { class: "primary", onclick: (e) => addBook(r, e.currentTarget) }, "Add book")));
+}
+
+async function addBook(r, btn) {
+  btn.disabled = true;
+  btn.textContent = "Adding…";
+  try {
+    const show = await api("/api/shows", { method: "POST", body: { url: r.url } });
+    toast(`Added ${show.name}. Its ${plural(r.chapters.length, "chapter")} are being cut into episodes.`, 5000);
+    Object.assign(add, { url: "", result: null, error: null, subs: {} });
+    navigate(`#/show/${show.id}`);
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = "Add book";
+    toast(`Couldn't add: ${err.message}`, 6000);
+  }
+}
+
 function resultView(r) {
+  if (r.kind === "book") return bookResult(r);
   if (r.kind === "search") {
     return section("Podcasts", r.results.length
       ? h("ul", { class: "card list-card" }, r.results.map((p) => h("li", {},

@@ -24,13 +24,14 @@ CREATE TABLE IF NOT EXISTS episodes (
     sponsor_removed INTEGER,     -- seconds of sponsor reads cut out
     sponsor_segments TEXT,       -- JSON [[start, end], ...] of what was cut, in the original's seconds
     sponsor_cuts TEXT,           -- JSON [{start, end, source, advertiser, confidence}, ...]: the same, with where each came from
+    number      INTEGER,         -- a book's chapter number (1-based); NULL for shows
     PRIMARY KEY (video_id, mode)
 );
 
 CREATE TABLE IF NOT EXISTS shows (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     name         TEXT NOT NULL,
-    kind         TEXT NOT NULL CHECK (kind IN ('youtube', 'rss')),
+    kind         TEXT NOT NULL CHECK (kind IN ('youtube', 'rss', 'book')),
     source_url   TEXT NOT NULL,
     feed_url     TEXT NOT NULL UNIQUE,
     mode         TEXT NOT NULL DEFAULT 'audio' CHECK (mode IN ('audio', 'video')),
@@ -43,7 +44,8 @@ CREATE TABLE IF NOT EXISTS shows (
     skip_intros  INTEGER NOT NULL DEFAULT 0,    -- also the intro and outro (SponsorBlock marks; YouTube shows)
     last_checked INTEGER,
     last_error   TEXT,
-    created_at   INTEGER NOT NULL
+    created_at   INTEGER NOT NULL,
+    author       TEXT                           -- a book's author
 );
 
 -- Every item ever seen in a show's feed, so nothing is downloaded twice and
@@ -125,7 +127,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "subtitles" not in cols:
         conn.execute("ALTER TABLE episodes ADD COLUMN subtitles TEXT")
     for col, kind in (("published_at", "INTEGER"), ("sponsor_state", "TEXT"), ("sponsor_removed", "INTEGER"),
-                      ("sponsor_segments", "TEXT"), ("sponsor_cuts", "TEXT")):
+                      ("sponsor_segments", "TEXT"), ("sponsor_cuts", "TEXT"), ("number", "INTEGER")):
         if col not in cols:
             conn.execute(f"ALTER TABLE episodes ADD COLUMN {col} {kind}")
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(shows)")}
@@ -135,6 +137,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE shows ADD COLUMN skip_sponsors INTEGER NOT NULL DEFAULT 0")
     if "skip_intros" not in cols:
         conn.execute("ALTER TABLE shows ADD COLUMN skip_intros INTEGER NOT NULL DEFAULT 0")
+    if "author" not in cols:
+        conn.execute("ALTER TABLE shows ADD COLUMN author TEXT")
+    _allow_books(conn)
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(feed_items)")}
     if "next_try" not in cols:
         conn.execute("ALTER TABLE feed_items ADD COLUMN next_try INTEGER NOT NULL DEFAULT 0")
@@ -151,6 +156,35 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("""INSERT INTO download_log (video_id, mode, show_id, title, at)
                         SELECT video_id, mode, show_id, title, added_at FROM episodes ORDER BY added_at""")
     _migrated = True
+
+
+def _allow_books(conn: sqlite3.Connection) -> None:
+    """Shows made before books existed only allow kind 'youtube' or 'rss', and
+    SQLite can't change a CHECK constraint in place: copy the table into one
+    with the current definition (SQLite's documented way). Foreign keys are off
+    meanwhile, or dropping the old table would delete every show's feed items."""
+    sql = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'shows'").fetchone()[0]
+    if "'book'" in sql:
+        return
+    create = SCHEMA[SCHEMA.index("CREATE TABLE IF NOT EXISTS shows"):]
+    create = create[:create.index(");") + 2].replace("IF NOT EXISTS shows", "shows_new")
+    cols = ", ".join(r["name"] for r in conn.execute("PRAGMA table_info(shows)"))
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        conn.execute("BEGIN")
+        conn.execute(create)
+        conn.execute(f"INSERT INTO shows_new ({cols}) SELECT {cols} FROM shows")
+        conn.execute("DROP TABLE shows")
+        conn.execute("ALTER TABLE shows_new RENAME TO shows")
+        if conn.execute("PRAGMA foreign_key_check").fetchone():
+            raise sqlite3.IntegrityError("feed items lost their show while allowing books")
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
 
 
 @contextmanager

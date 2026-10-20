@@ -101,6 +101,8 @@ def _save(img: Image.Image, path) -> None:
 def make_show_art(show: dict, fallback_thumb: str | None = None) -> bool:
     """Build the show's badged artwork from its channel picture, or failing that
     from an episode thumbnail (relative to MEDIA_DIR). Returns True if saved."""
+    if show.get("kind") == "book":
+        return _book_art(show)
     img = None
     try:
         if show.get("kind") == "rss":
@@ -117,6 +119,22 @@ def make_show_art(show: dict, fallback_thumb: str | None = None) -> bool:
     if img is None:
         return False
     _save(_badge(_square(img)), path_for(show["id"]))
+    return True
+
+
+def _book_art(show: dict) -> bool:
+    """A book's cover, whole: covers are rarely square, so it sits on a blurred,
+    enlarged copy of itself instead of being cropped."""
+    from . import books
+    rel = books.cover(show["feed_url"])
+    if not rel:
+        return False
+    img = Image.open(MEDIA_DIR / rel).convert("RGB")
+    back = _square(img).filter(ImageFilter.GaussianBlur(SIZE // 25))
+    scale = SIZE / max(img.size)
+    img = img.resize((round(img.width * scale), round(img.height * scale)), Image.LANCZOS)
+    back.paste(img, ((SIZE - img.width) // 2, (SIZE - img.height) // 2))
+    _save(_badge(back), path_for(show["id"]))
     return True
 
 

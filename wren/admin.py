@@ -9,7 +9,7 @@ import urllib.parse
 
 import yt_dlp
 
-from . import artwork, db, feeds, podcast, podcasts, sponsors, subscriptions, ytdl
+from . import artwork, books, db, feeds, podcast, podcasts, sponsors, subscriptions, ytdl
 from .config import MEDIA_DIR
 
 
@@ -112,6 +112,7 @@ def _entries_from_episodes(rows: list[dict]) -> list[dict]:
             "duration": r["duration"],
             "thumb_url": _media(r["thumb"]),
             "source_url": r["source_url"],
+            "number": r.get("number"),
             "state": "downloaded",
             "copies": [],
             "sponsors": None,
@@ -150,6 +151,9 @@ def show_detail(show_id: int) -> dict | None:
             """SELECT * FROM feed_items WHERE show_id = ? AND status != 'downloaded'
                ORDER BY rowid DESC LIMIT ?""", (show_id, ITEM_LIMIT))]
     entries = _entries_from_episodes(rows)
+    if show["kind"] == "book":
+        entries.sort(key=lambda e: e["number"] or 0)  # in reading order
+        items.reverse()
     have = {e["video_id"] for e in entries}
     for e in entries:
         modes = {c["mode"] for c in e["copies"]}
@@ -293,6 +297,18 @@ def _podcast_show(feed_url: str) -> dict:
     }
 
 
+def _book(source: str) -> dict:
+    book = books.read(source)
+    thumb = books.cover(source)
+    return {
+        "kind": "book", "url": source, "title": book["title"], "author": book["author"], "parts": book["parts"],
+        "duration": round(sum(c.end - c.start for c in book["chapters"])),
+        "thumb_url": f"/media/{thumb}" if thumb else None,
+        "subscribed": _subscribed(source),
+        "chapters": [{"title": c.title, "duration": round(c.end - c.start)} for c in book["chapters"]],
+    }
+
+
 def resolve(url: str) -> dict:
     """Work out what was pasted: a YouTube show (channel or playlist) or podcast
     feed, with a preview of its latest episodes; a single YouTube video and the
@@ -300,6 +316,8 @@ def resolve(url: str) -> dict:
     url = url.strip()
     if not url:
         raise ValueError("Paste a link, or type a show's name.")
+    if books.is_book(url):
+        return _book(books.source_for(url))
     p = urllib.parse.urlparse(url)
     if not p.netloc:
         results = podcasts.search(url)

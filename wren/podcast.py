@@ -75,6 +75,8 @@ def _item(ep: dict, base: str) -> str:
         parts.append(f'<itunes:image href="{escape(base + "/media/" + ep["thumb"])}"/>')
     if ep.get("channel"):
         parts.append(f"<itunes:author>{escape(ep['channel'])}</itunes:author>")
+    if ep.get("number"):
+        parts.append(f"<itunes:episode>{ep['number']}</itunes:episode>")
     return "<item>" + "".join(parts) + "</item>"
 
 
@@ -100,10 +102,11 @@ def _placeholder_item(base: str) -> str:
 
 
 def render(title: str, description: str, episodes: list[dict], base: str, self_url: str,
-           art: str | None = None) -> str:
+           art: str | None = None, serial: bool = False) -> str:
     """An RSS 2.0 feed (with iTunes tags) of the given episodes, newest first.
     `art` is the show's artwork relative to MEDIA_DIR (default: the newest
-    episode's thumbnail)."""
+    episode's thumbnail). A serial feed (a book) is listed by podcast apps in
+    order, first episode first."""
     episodes = sorted(episodes, key=_pub_date, reverse=True)
     art = art or next((ep["thumb"] for ep in episodes if ep.get("thumb")), None)
     author = next((ep["channel"] for ep in episodes if ep.get("channel")), None)
@@ -114,7 +117,7 @@ def render(title: str, description: str, episodes: list[dict], base: str, self_u
         "<language>en</language>",
         f'<atom:link href="{escape(self_url)}" rel="self" type="application/rss+xml"/>',
         "<itunes:explicit>false</itunes:explicit>",
-        "<itunes:type>episodic</itunes:type>",
+        f"<itunes:type>{'serial' if serial else 'episodic'}</itunes:type>",
         # Keep private feeds out of podcast directories.
         "<itunes:block>Yes</itunes:block>",
     ]

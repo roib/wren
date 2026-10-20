@@ -10,7 +10,7 @@ import random
 import re
 import time
 
-from . import artwork, db, downloader, feeds, podcasts, push, transcribe
+from . import artwork, books, db, downloader, feeds, podcasts, push, transcribe
 from .config import DOWNLOAD_PAUSE, MAX_ATTEMPTS, MEDIA_DIR
 
 log = logging.getLogger("wren")
@@ -56,15 +56,22 @@ def get_show(show_id: int) -> dict | None:
 
 
 def source_kind(url: str) -> str:
-    """"rss" for a podcast feed or Apple Podcasts link, "youtube" otherwise."""
+    """"book" for an audiobook in the books folder, "rss" for a podcast feed or
+    Apple Podcasts link, "youtube" otherwise."""
+    if books.is_book(url):
+        return "book"
     return "rss" if podcasts.is_feed_url(url) else "youtube"
 
 
 def _feed_url_for(kind: str, url: str) -> str:
+    if kind == "book":
+        return books.source_for(url)
     return podcasts.feed_url_for(url) if kind == "rss" else feeds.feed_url_for(url)
 
 
 def _fetch(kind: str, feed_url: str) -> feeds.Feed:
+    if kind == "book":
+        return books.fetch(feed_url)
     return podcasts.fetch(feed_url) if kind == "rss" else feeds.fetch(feed_url)
 
 
@@ -80,6 +87,13 @@ def subscribe(url: str, mode: str = "audio", keep_last: int = 10, backfill: int 
     kind = source_kind(url)
     if kind == "rss" and mode == "video":
         raise ValueError("podcast feeds are audio only; follow the show on YouTube for video")
+    author = None
+    if kind == "book":
+        # Every chapter, all kept, none too short; and no ads to look for.
+        mode, keep_last, min_duration, title_filter, skip_sponsors = "audio", 0, 0, None, False
+        url = books.source_for(url)
+        author = books.read(url)["author"]
+        backfill = 1 << 30
 
     feed_url = _feed_url_for(kind, url)
     with db.connect() as conn:
@@ -89,12 +103,12 @@ def subscribe(url: str, mode: str = "audio", keep_last: int = 10, backfill: int 
     feed = _fetch(kind, feed_url)
     with db.connect() as conn:
         cur = conn.execute(
-            """INSERT INTO shows (name, kind, source_url, feed_url, mode, keep_last,
-                                  min_duration, title_filter, skip_sponsors, skip_intros, last_checked, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO shows (name, kind, source_url, feed_url, mode, keep_last, min_duration, title_filter,
+                                  skip_sponsors, skip_intros, author, last_checked, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (feed.title or url, kind, url, feed_url, mode, keep_last, min_duration, title_filter,
              int(bool(skip_sponsors)), int(bool(skip_sponsors and skip_intros and kind == "youtube")),
-             _now(), _now()),
+             author, _now(), _now()),
         )
         show_id = cur.lastrowid
         show = dict(conn.execute("SELECT * FROM shows WHERE id = ?", (show_id,)).fetchone())
@@ -130,6 +144,8 @@ def update_show(show_id: int, **fields) -> dict:
     current = get_show(show_id)
     if current and current["kind"] == "rss" and (fields.get("mode") == "video" or fields.get("video_copy")):
         raise ValueError("podcast feeds are audio only; switch the show to YouTube for video")
+    if current and current["kind"] == "book" and set(fields) - {"name"}:
+        raise ValueError("a book keeps all its chapters as audio; only its name can change")
     _check_regex(fields.get("title_filter"))
     for flag in ("enabled", "video_copy", "skip_sponsors", "skip_intros"):
         if flag in fields:
@@ -156,6 +172,8 @@ def switch_source(show_id: int, url: str) -> dict:
     if show is None:
         raise KeyError(show_id)
     kind = source_kind(url)
+    if "book" in (kind, show["kind"]):
+        raise ValueError("a book can't be switched to another source")
     feed_url = _feed_url_for(kind, url)
     with db.connect() as conn:
         other = conn.execute("SELECT name FROM shows WHERE feed_url = ? AND id != ?", (feed_url, show_id)).fetchone()
@@ -187,8 +205,14 @@ def requeue_item(show_id: int, item_id: str) -> bool:
 
 
 def unsubscribe(show_id: int) -> None:
-    """Remove a show. Its downloaded episodes stay in the library as manual adds."""
+    """Remove a show. Its downloaded episodes stay in the library as manual adds;
+    a book's chapters are deleted with it (its files in the books folder stay)."""
+    show = get_show(show_id)
     with db.connect() as conn:
+        if show and show["kind"] == "book":
+            for ep in conn.execute("SELECT video_id, mode, file, thumb, subtitles FROM episodes WHERE show_id = ?",
+                                   (show_id,)).fetchall():
+                _remove_episode(conn, ep)
         conn.execute("UPDATE episodes SET show_id = NULL WHERE show_id = ?", (show_id,))
         conn.execute("DELETE FROM shows WHERE id = ?", (show_id,))  # feed_items cascade
 
@@ -308,7 +332,9 @@ def _try_download(show: dict, item: dict) -> bool:
 
     log.info("%s: downloading %s", show["name"], item["title"])
     try:
-        if show["kind"] == "rss":
+        if show["kind"] == "book":
+            books.extract(show, item)
+        elif show["kind"] == "rss":
             podcasts.download(show["feed_url"], item["item_id"], show["id"],
                               hold_for_sponsors=bool(show["skip_sponsors"]))
         else:
@@ -363,7 +389,7 @@ def _download_queue(show: dict) -> int:
                ORDER BY rowid""", (show["id"],))]
     done = 0
     for n, item in enumerate(items):
-        if n:
+        if n and show["kind"] == "youtube":
             time.sleep(pause_seconds())  # go easy on YouTube
         try:
             done += _download_item(show, item)
@@ -373,7 +399,8 @@ def _download_queue(show: dict) -> int:
     return done
 
 
-def download_next(show_ids: list[int] | None = None, kinds: tuple[str, ...] = ("youtube", "rss")) -> str | bool:
+def download_next(show_ids: list[int] | None = None,
+                  kinds: tuple[str, ...] = ("youtube", "rss", "book")) -> str | bool:
     """Download the oldest queued item that's due, across all enabled shows of
     the given kinds (or only the given shows). Returns the kind of show it was
     for ("youtube" ones need pacing), or False when there was nothing to do."""
@@ -539,10 +566,12 @@ def _apply_retention(show: dict) -> int:
 # ---- sync -------------------------------------------------------------------------
 
 def check_feeds(show_ids: list[int] | None = None) -> int:
-    """Check enabled shows (or the given ones) for new episodes. Returns how many were queued."""
+    """Check enabled shows (or the given ones) for new episodes. Returns how many
+    were queued. Books are only looked at again when asked to (a part added to
+    the folder later): their files may be deleted once the chapters are in."""
     with db.connect() as conn:
         if show_ids is None:
-            shows = [dict(r) for r in conn.execute("SELECT * FROM shows WHERE enabled = 1")]
+            shows = [dict(r) for r in conn.execute("SELECT * FROM shows WHERE enabled = 1 AND kind != 'book'")]
         else:
             marks = ",".join("?" * len(show_ids))
             shows = [dict(r) for r in conn.execute(
@@ -554,7 +583,7 @@ def sync(show_id: int | None = None) -> dict:
     """Check feeds, download new episodes and apply retention for one or all shows."""
     with db.connect() as conn:
         if show_id is None:
-            shows = [dict(r) for r in conn.execute("SELECT * FROM shows WHERE enabled = 1")]
+            shows = [dict(r) for r in conn.execute("SELECT * FROM shows WHERE enabled = 1 AND kind != 'book'")]
         else:
             shows = [dict(r) for r in conn.execute("SELECT * FROM shows WHERE id = ?", (show_id,))]
 

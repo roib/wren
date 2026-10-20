@@ -347,9 +347,10 @@ class Worker:
                 self._schedule_next_poll()
             return True
 
-        # Podcast-feed episodes come straight from the podcast's host: none of the
-        # YouTube pacing (active hours, gaps, the hourly cap, pauses) applies.
-        if subscriptions.download_next(kinds=("rss",)):
+        # Podcast-feed episodes come straight from the podcast's host, and book
+        # chapters from the books folder: none of the YouTube pacing (active
+        # hours, gaps, the hourly cap, pauses) applies.
+        if subscriptions.download_next(kinds=("rss", "book")):
             self.activity = "downloading"
             self._process_wake.set()  # it may be one to cut
             return True

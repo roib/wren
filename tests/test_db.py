@@ -96,3 +96,24 @@ def test_downloads_are_logged_and_outlive_the_episode():
         conn.execute("DELETE FROM episodes")
         rows = [dict(r) for r in conn.execute("SELECT video_id, mode, show_id, title, bytes, at FROM download_log")]
     assert rows == [{"video_id": "a", "mode": "audio", "show_id": 3, "title": "A", "bytes": 1234, "at": 50}]
+
+
+def test_books_migration_keeps_every_show_and_feed_item():
+    # The schema just before books: kind limited to 'youtube' or 'rss'.
+    before = db.SCHEMA.replace("'youtube', 'rss', 'book'", "'youtube', 'rss'")
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    old = sqlite3.connect(DB_PATH)
+    old.execute("PRAGMA foreign_keys = ON")
+    old.executescript(before)
+    old.execute("INSERT INTO shows (name, kind, source_url, feed_url, created_at) VALUES ('Old show', 'rss', 'u', 'f', 1)")
+    old.execute("INSERT INTO feed_items (show_id, item_id, url, status, first_seen) VALUES (1, 'a', 'u', 'downloaded', 1)")
+    old.commit()
+    old.close()
+
+    with db.connect() as conn:
+        assert [tuple(r) for r in conn.execute("SELECT id, name, kind FROM shows")] == [(1, "Old show", "rss")]
+        assert conn.execute("SELECT COUNT(*) FROM feed_items").fetchone()[0] == 1
+        conn.execute("INSERT INTO shows (name, kind, source_url, feed_url, created_at) "
+                     "VALUES ('A book', 'book', 'book:x', 'book:x', 2)")
+        conn.execute("DELETE FROM shows WHERE id = 1")  # foreign keys still on: its items go with it
+        assert conn.execute("SELECT COUNT(*) FROM feed_items").fetchone()[0] == 0

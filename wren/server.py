@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import admin, artwork, db, podcast, push, subscriptions, worker
+from . import admin, artwork, books, db, podcast, push, subscriptions, worker
 from .config import BASE_URL, MEDIA_DIR, WEB_DIR, WORKER_ENABLED
 
 # Slim container images lack /etc/mime.types; without these, media is served as
@@ -101,6 +101,12 @@ def resolve(req: ResolveRequest):
     except Exception as e:  # network / yt-dlp trouble
         msg = str(e).splitlines()[0][:200]
         raise HTTPException(502, f"Couldn't look that up: {msg}")
+
+
+@app.get("/api/books")
+def available_books():
+    """What's in the books folder, to add as books."""
+    return {"books": books.available()}
 
 
 @app.delete("/api/episodes/{video_id}", status_code=204)
@@ -351,9 +357,12 @@ def _show_feed(show: dict, request: Request, video: bool = False) -> Response:
            and ep["sponsor_state"] != "pending"]  # held back until its sponsor reads are cut
     title = f"{show['name']} (video)" if video and show["mode"] == "audio" else show["name"]
     base = _base_url(request)
+    book = show["kind"] == "book"
+    about = (f"{show['name']}{', by ' + show['author'] if show['author'] else ''}: an audiobook in chapters, from Wren."
+             if book else f"{show['name']}, downloaded by Wren.")
     return _feed_response(podcast.render(
-        title, f"{show['name']}, downloaded by Wren.", eps, base, f"{base}{request.url.path}",
-        art=artwork.feed_ref(artwork.path_for(show["id"]))))
+        title, about, eps, base, f"{base}{request.url.path}",
+        art=artwork.feed_ref(artwork.path_for(show["id"])), serial=book))
 
 
 @app.get("/feeds/singles.xml")

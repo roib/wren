@@ -25,6 +25,7 @@ three-pane desktop layout.
 | `wren/transcribe.py` | Whisper (faster-whisper) transcripts with word times; optional, in the container; transcripts kept 14 days |
 | `wren/ads.py` | Ad reads in a transcript via Claude (API `messages.parse`, or the host helper's request/answer files), boundaries snapped to pauses, plausibility checks |
 | `host/` | `wren-claude-helper` + systemd user units: answers Wren's requests with `claude -p` (tools off) on the host, with the owner's login |
+| `wren/books.py` | Audiobooks from the books folder (`WREN_BOOKS`): chapters from the files' chapter marks, cut out losslessly; source/feed URL `book:<path>`, ids `book` + hash |
 | `wren/downloader.py` | One download with yt-dlp; `Skipped`, `Unavailable`, `RateLimited` exceptions |
 | `wren/podcast.py` | RSS rendering, feed slugs, the empty-feed placeholder |
 | `wren/artwork.py` | Square show artwork from the channel picture, with the Wren badge (`wren-badge.png`) |
@@ -105,6 +106,18 @@ three-pane desktop layout.
   downloads skip all YouTube pacing; their ads are mostly inserted per
   download and found only in the transcript (SponsorBlock is YouTube-only).
   Some feeds are short (Hard Fork lists 3 entries): that's the feed, not a bug.
+- **Books are shows of kind `book`.** Every chapter is queued at once and kept
+  (`keep_last` 0, no minimum length, no sponsor removal). Chapters download in
+  the podcast-feed lane, with no YouTube pacing. Their feed is
+  `itunes:type serial` with `itunes:episode` numbers. `published_at` is the
+  show's creation time plus the chapter number, so date order is reading order.
+  The regular checks skip books, because their files may be deleted after the
+  import; only "Look for new parts" reads the folder again. Removing a book
+  deletes its chapters rather than moving them to the single episodes. Paths
+  are confined to the books folder. Adding the `book` kind meant rebuilding the
+  `shows` table once (`db._allow_books`), because SQLite can't change a CHECK
+  constraint. Foreign keys stay off during the copy, or feed items would be
+  cascade-deleted.
 - **Apple Podcasts** won't follow an empty feed (hence the placeholder item),
   caches artwork (artwork URLs carry `?v=<mtime>`), and opens `podcast://` links
   with "Follow a Show by URL" filled in.
