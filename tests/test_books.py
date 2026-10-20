@@ -145,7 +145,7 @@ def test_parts_that_each_number_their_chapters(book):
     assert [c.title for c in b["chapters"]] == ["Part 1", "Part 2", "Part 3", "Part 4"]
 
 
-@pytest.mark.parametrize("tag, title", [("Red Rising 1 of 2", "Red Rising"), ("Dune (Part 2 of 3)", "Dune"),
+@pytest.mark.parametrize("tag, title", [("The Long Road 1 of 2", "The Long Road"), ("Dune (Part 2 of 3)", "Dune"),
                                         ("Dune, Part 2", "Dune"), ("Catch-22", "Catch-22"), ("1984", "1984")])
 def test_book_title_without_its_part(tag, title):
     assert books._book_title(tag) == title
