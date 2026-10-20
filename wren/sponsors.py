@@ -6,6 +6,11 @@ them, by when the marks are in. Then each is processed exactly once: the marked
 sponsor segments are cut out (losslessly, no re-encoding) and it joins the feed.
 The file isn't changed after that, so a podcast app never holds a stale copy.
 
+With a Claude API key and Whisper installed ("transcript" mode), there's no
+wait: an episode is processed right after downloading, using SponsorBlock's
+marks if it already has any and otherwise the ad reads Claude finds in a local
+transcript (ads.py, transcribe.py).
+
 SponsorBlock (sponsor.ajay.app) is run by volunteers; lookups send only the
 first characters of a hash of the video id. Its data is CC BY-NC-SA 4.0.
 """
@@ -21,7 +26,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from . import db
+from . import ads, db, transcribe
 from .config import MEDIA_DIR, SPONSOR_DELAY_HOURS
 
 log = logging.getLogger("wren")
@@ -35,12 +40,23 @@ MIN_SEGMENT = 1.0  # seconds; shorter marks aren't worth a cut
 GIVE_UP_SECONDS = 12 * 3600
 RETRY_SECONDS = 15 * 60
 
-_next_try: dict[tuple[str, str], float] = {}  # (video_id, mode) -> after a failed lookup
+_next_try: dict[tuple[str, str], float] = {}  # (video_id, mode) -> after a failed attempt
+
+# What's being processed right now, for the app: {"title", "step"}.
+current: dict | None = None
+
+
+def mode() -> str:
+    """"transcript" when ad reads can be found without SponsorBlock, else "sponsorblock"."""
+    return "transcript" if ads.available() and transcribe.available() else "sponsorblock"
 
 
 def ready_at(ep: dict) -> int:
-    """When a held-back episode is due: the delay after YouTube published it
-    (or after it was downloaded, if the publish time isn't known)."""
+    """When a held-back episode is due. Waiting for SponsorBlock: the delay
+    after YouTube published it (or after the download, if that isn't known).
+    With transcripts: straight away."""
+    if mode() == "transcript":
+        return int(ep["added_at"])
     return int((ep.get("published_at") or ep["added_at"]) + SPONSOR_DELAY_HOURS * 3600)
 
 
@@ -101,28 +117,84 @@ def cut(path: Path, segments: list[tuple[float, float]]) -> None:
         out.replace(path)
 
 
+def _step(ep: dict, step: str) -> None:
+    global current
+    current = {"title": ep["title"], "step": step}
+
+
+def _other_copy_cuts(ep: dict) -> dict | None:
+    """The cuts already decided for this video's other copy (audio/video share a timeline)."""
+    with db.connect() as conn:
+        row = conn.execute("""SELECT sponsor_cuts FROM episodes WHERE video_id = ? AND mode != ?
+                              AND sponsor_state = 'done' AND sponsor_cuts IS NOT NULL""",
+                           (ep["video_id"], ep["mode"])).fetchone()
+    return json.loads(row["sponsor_cuts"]) if row else None
+
+
+def decide(ep: dict) -> dict:
+    """What to cut from an episode: {"cuts": [{start, end, source, ...}], "note": why nothing was, or None}."""
+    reused = _other_copy_cuts(ep)
+    if reused is not None:
+        return reused
+    _step(ep, "checking SponsorBlock")
+    try:
+        marked = merge(lookup(ep["video_id"]), ep.get("duration"))
+    except Exception:
+        if mode() != "transcript":
+            raise  # nothing else to go on: try again later
+        log.warning("SponsorBlock unreachable; using the transcript for %s", ep["title"])
+        marked = []
+    if marked or mode() != "transcript":
+        return {"cuts": [{"start": round(a, 1), "end": round(b, 1), "source": "sponsorblock"} for a, b in marked],
+                "note": None}
+    transcript = transcribe.load(ep["video_id"])
+    if transcript is None:
+        _step(ep, "transcribing")
+        transcript = transcribe.transcribe(MEDIA_DIR / ep["file"])
+        transcribe.save(ep["video_id"], transcript)
+        log.info("Transcribed %s in %ss", ep["title"], transcript["seconds"])
+    _step(ep, "finding ad reads")
+    cuts, note = ads.choose(ads.ask_claude(transcript, ep["title"]), transcript, ep.get("duration"))
+    if note:
+        log.warning("%s: %s", ep["title"], note)
+    return {"cuts": cuts, "note": note}
+
+
 def process(ep: dict) -> None:
-    """Look up and cut one held-back episode, then let it into the feeds."""
-    segments = merge(lookup(ep["video_id"]), ep.get("duration"))
+    """Decide and make the cuts in one held-back episode, then let it into the feeds."""
+    if not (MEDIA_DIR / ep["file"]).exists():
+        raise FileNotFoundError(ep["file"])
+    decision = decide(ep)
+    segments = merge([(c["start"], c["end"]) for c in decision["cuts"]], ep.get("duration"))
     if segments:
+        _step(ep, "cutting")
         cut(MEDIA_DIR / ep["file"], segments)
     removed = round(sum(end - start for start, end in segments))
     with db.connect() as conn:
         conn.execute(
-            """UPDATE episodes SET sponsor_state = 'done', sponsor_removed = ?, sponsor_segments = ?,
+            """UPDATE episodes SET sponsor_state = 'done', sponsor_removed = ?, sponsor_segments = ?, sponsor_cuts = ?,
                                    duration = CASE WHEN duration IS NULL THEN NULL ELSE MAX(0, duration - ?) END
                WHERE video_id = ? AND mode = ?""",
-            (removed, json.dumps([[round(a, 1), round(b, 1)] for a, b in segments]), removed,
+            (removed, json.dumps([[round(a, 1), round(b, 1)] for a, b in segments]), json.dumps(decision), removed,
              ep["video_id"], ep["mode"]))
+    sources = sorted({c["source"] for c in decision["cuts"]})
     if segments:
-        log.info("Removed %d sponsor read(s), %ds, from %s (%s)", len(segments), removed, ep["title"], ep["mode"])
+        log.info("Removed %d sponsor read(s), %ds, from %s (%s; %s)", len(segments), removed, ep["title"], ep["mode"],
+                 ", ".join(sources))
     else:
-        log.info("No sponsor reads marked in %s (%s)", ep["title"], ep["mode"])
+        log.info("No sponsor reads cut from %s (%s)", ep["title"], ep["mode"])
 
 
 def process_next(now: float | None = None) -> bool:
     """Process the oldest held-back episode that's due. Returns False when none is."""
-    now = now or time.time()
+    global current
+    try:
+        return _process_next(now or time.time())
+    finally:
+        current = None
+
+
+def _process_next(now: float) -> bool:
     with db.connect() as conn:
         rows = [dict(r) for r in conn.execute(
             "SELECT * FROM episodes WHERE sponsor_state = 'pending' ORDER BY added_at")]
@@ -132,6 +204,9 @@ def process_next(now: float | None = None) -> bool:
             continue
         try:
             process(ep)
+        except FileNotFoundError:
+            # Deleted while it was being processed (by hand, or a keep-last limit).
+            log.info("%s was removed before its sponsor reads were cut", ep["title"])
         except Exception as e:
             if now < ready_at(ep) + GIVE_UP_SECONDS:
                 _next_try[key] = now + RETRY_SECONDS

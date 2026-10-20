@@ -1,4 +1,5 @@
 import datetime as dt
+import time
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -90,12 +91,12 @@ def test_status_and_download_now():
     assert push.active_count() == 0
 
 
-def test_worker_cuts_sponsor_reads_before_anything_else(monkeypatch):
+def test_sponsor_processing_runs_beside_downloads(monkeypatch):
     from wren import sponsors
     calls = []
-    monkeypatch.setattr(sponsors, "process_next", lambda now: calls.append(now) or True)
+    monkeypatch.setattr(sponsors, "process_next", lambda: calls.append(1) or True)
     w = worker.Worker()
-    w.next_poll = float("inf")
-    w.paused_until = float("inf")  # even while YouTube downloads are paused
-    assert w._step()
+    w.paused_until = time.time() + 3600  # downloads paused: processing still runs
+    assert w._process_once()
     assert len(calls) == 1
+    assert w.status()["sponsor_mode"] in ("sponsorblock", "transcript")

@@ -10,7 +10,7 @@ import random
 import re
 import time
 
-from . import artwork, db, downloader, feeds, push
+from . import artwork, db, downloader, feeds, push, transcribe
 from .config import DOWNLOAD_PAUSE, MAX_ATTEMPTS, MEDIA_DIR
 
 log = logging.getLogger("wren")
@@ -432,6 +432,9 @@ def _remove_episode(conn, ep) -> None:
     (MEDIA_DIR / ep["file"]).unlink(missing_ok=True)
     if ep["subtitles"]:
         (MEDIA_DIR / ep["subtitles"]).unlink(missing_ok=True)
+    # Its transcript (shared by both copies) goes with the last one.
+    if not conn.execute("SELECT 1 FROM episodes WHERE video_id = ?", (ep["video_id"],)).fetchone():
+        transcribe.path_for(ep["video_id"]).unlink(missing_ok=True)
     # The thumbnail may be shared with the other format of the same video.
     if ep["thumb"] and not conn.execute(
             "SELECT 1 FROM episodes WHERE thumb = ?", (ep["thumb"],)).fetchone():

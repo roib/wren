@@ -16,6 +16,46 @@ def _ago(ts: int | None) -> str:
     return f"{mins // (60 * 24)}d ago"
 
 
+def _ads_check(parser, video_id: str) -> None:
+    """Transcribe an episode and ask Claude for its ad reads, compared with
+    SponsorBlock's marks: a dry run to see how well it works on a show."""
+    import time
+
+    from . import ads, db, sponsors, transcribe
+    from .config import MEDIA_DIR
+
+    if not transcribe.available():
+        parser.exit(1, "wren: Whisper (faster-whisper) isn't installed\n")
+    if not ads.available():
+        parser.exit(1, "wren: set ANTHROPIC_API_KEY to find ad reads\n")
+    with db.connect() as conn:
+        row = conn.execute("SELECT * FROM episodes WHERE video_id = ? ORDER BY mode LIMIT 1", (video_id,)).fetchone()
+    if not row:
+        parser.exit(1, f"wren: no downloaded episode {video_id}\n")
+    ep = dict(row)
+    clock = lambda t: f"{int(t) // 60}:{int(t) % 60:02d}"  # noqa: E731
+    print(f"{ep['title']} ({clock(ep['duration'] or 0)})")
+    if ep["sponsor_state"] == "done" and ep["sponsor_removed"]:
+        print("note: this copy has already been cut, so times are in the cut file")
+    transcript = transcribe.transcribe(MEDIA_DIR / ep["file"])
+    rate = (ep["duration"] or 0) / transcript["seconds"] if transcript["seconds"] else 0
+    print(f"transcribed in {transcript['seconds']:.0f}s ({rate:.0f}x real time)")
+    t0 = time.time()
+    found = ads.ask_claude(transcript, ep["title"])
+    print(f"Claude answered in {time.time() - t0:.0f}s")
+    cuts, note = ads.choose(found, transcript, ep["duration"])
+    for a in found:
+        kept = any(c["advertiser"] == a.advertiser and abs(c["start"] - a.start) < ads.SNAP_WINDOW + 1 for c in cuts)
+        print(f"  {clock(a.start)}-{clock(a.end)}  {a.advertiser}  [{a.confidence}]{'  -> cut' if kept else ''}")
+    if note:
+        print(note)
+    try:
+        marks = sponsors.merge(sponsors.lookup(video_id), ep["duration"])
+        print("SponsorBlock: " + (", ".join(f"{clock(a)}-{clock(b)}" for a, b in marks) or "no marks"))
+    except Exception as e:
+        print(f"SponsorBlock: unreachable ({e})")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="wren")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -47,6 +87,9 @@ def main() -> None:
 
     p_unsub = sub.add_parser("unsubscribe", help="stop following a show (keeps its episodes)")
     p_unsub.add_argument("show_id", type=int)
+
+    p_check = sub.add_parser("ads-check", help="find the ad reads in a downloaded episode, without cutting anything")
+    p_check.add_argument("video_id")
 
     p_sync = sub.add_parser("sync", help="check subscriptions and download new episodes")
     p_sync.add_argument("show_id", type=int, nargs="?")
@@ -106,6 +149,8 @@ def main() -> None:
             parser.exit(1, f"wren: no show with id {args.show_id}\n")
         subscriptions.unsubscribe(args.show_id)
         print(f"Unsubscribed from {show['name']} (its episodes stay in the library)")
+    elif args.cmd == "ads-check":
+        _ads_check(parser, args.video_id)
     elif args.cmd == "sync":
         from . import subscriptions
 

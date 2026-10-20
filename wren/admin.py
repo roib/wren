@@ -128,8 +128,10 @@ def _entries_from_episodes(rows: list[dict]) -> list[dict]:
             # Held back from the feeds until its sponsor reads are cut (sponsors.py).
             e["sponsors"] = {"state": "pending", "ready_at": sponsors.ready_at(r)}
         elif r["sponsor_state"] == "done" and (e.get("sponsors") or {}).get("state") != "pending":
+            decision = json.loads(r["sponsor_cuts"] or "null") or {}
             e["sponsors"] = {"state": "done", "removed": r["sponsor_removed"] or 0,
-                             "count": len(json.loads(r["sponsor_segments"] or "[]"))}
+                             "count": len(json.loads(r["sponsor_segments"] or "[]")),
+                             "cuts": decision.get("cuts", []), "note": decision.get("note")}
     for e in by_id.values():
         e["copies"].sort(key=lambda c: c["mode"])  # audio before video
     return sorted(by_id.values(), key=lambda e: (e["upload_date"] or "", e["added_at"]), reverse=True)

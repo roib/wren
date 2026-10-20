@@ -24,7 +24,7 @@ from pathlib import Path
 
 import yt_dlp
 
-from . import db, downloader, push, sponsors, subscriptions
+from . import db, downloader, push, sponsors, subscriptions, transcribe
 from .config import (ACTIVE_HOURS, BLOCK_PAUSE_MINUTES, MAX_DOWNLOADS_PER_HOUR, MEDIA_DIR,
                      POLL_JITTER_MINUTES, POLL_MINUTES, SPONSOR_DELAY_HOURS, TIMEZONE)
 
@@ -196,6 +196,11 @@ class Worker:
         self.override_all = False
         self.override_shows: set[int] = set()
         self.activity = "idle"
+        # Cutting sponsor reads runs beside downloads, as transcribing an episode
+        # takes minutes; it never touches YouTube, so at any hour, even while paused.
+        self._processing: threading.Thread | None = None
+        self._process_wake = threading.Event()
+        self._cleaned_at = 0.0
 
     def start(self) -> None:
         _recover()
@@ -203,14 +208,18 @@ class Worker:
         self.next_poll = next_active(time.time() + FIRST_POLL_DELAY)
         self._thread = threading.Thread(target=self._run, name="wren-worker", daemon=True)
         self._thread.start()
+        self._processing = threading.Thread(target=self._process_loop, name="wren-sponsors", daemon=True)
+        self._processing.start()
         log.info("Worker started (yt-dlp %s); checking shows every %d min between %02d:00 and %02d:00 %s",
                  yt_dlp.version.__version__, POLL_MINUTES, *ACTIVE_HOURS, TIMEZONE.key)
 
     def stop(self) -> None:
         self._stop.set()
         self._wake.set()
-        if self._thread:
-            self._thread.join(timeout=5)
+        self._process_wake.set()
+        for thread in (self._thread, self._processing):
+            if thread:
+                thread.join(timeout=5)
 
     def nudge(self) -> None:
         """Something was queued; don't wait for the idle timeout."""
@@ -243,6 +252,8 @@ class Worker:
             "poll_minutes": POLL_MINUTES,
             "active_hours": list(ACTIVE_HOURS),
             "sponsor_delay_hours": SPONSOR_DELAY_HOURS,
+            "sponsor_mode": sponsors.mode(),
+            "processing": sponsors.current,
             "timezone": TIMEZONE.key,
             "active_now": is_active(now),
             "resume_at": int(next_active(now)),
@@ -250,6 +261,23 @@ class Worker:
             "override": self.override_all or bool(self.override_shows),
             "override_shows": sorted(self.override_shows),
         }
+
+    def _process_once(self) -> bool:
+        """Cut one held-back episode that's due; tidy old transcripts hourly."""
+        if time.time() - self._cleaned_at > 3600:
+            self._cleaned_at = time.time()
+            transcribe.clean_up()
+        return sponsors.process_next()
+
+    def _process_loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                if self._process_once():
+                    continue
+            except Exception:
+                log.exception("Sponsor processing error")
+            self._process_wake.wait(timeout=IDLE_WAIT)
+            self._process_wake.clear()
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -293,11 +321,6 @@ class Worker:
                 self._schedule_next_poll()
             return True
 
-        # Cutting sponsor reads doesn't touch YouTube: any hour, even while paused.
-        self.activity = "removing sponsor reads"
-        if sponsors.process_next(now):
-            return True
-
         if now < self.paused_until:
             self.activity = "paused"
             return False
@@ -325,6 +348,7 @@ class Worker:
             # Outside active hours with only some shows requested, stick to those.
             only = None if (active or self.override_all) else sorted(self.override_shows)
             if subscriptions.download_next(only) or subscriptions.download_next_copy(only):
+                self._process_wake.set()  # it may be one to cut
                 self._recent.append(now)
                 self.next_download_at = time.time() + subscriptions.pause_seconds()
                 return True

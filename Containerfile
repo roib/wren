@@ -14,6 +14,12 @@ WORKDIR /app
 COPY pyproject.toml ./
 RUN pip install --no-cache-dir "yt-dlp[default]" fastapi "uvicorn[standard]" pillow pywebpush tzdata
 
+# Finding ad reads: Whisper (speech to text, on the CPU) and the Claude API
+# client. Pinned: these are the versions tested together.
+RUN pip install --no-cache-dir "faster-whisper==1.2.1" "anthropic==1.15.0"
+# The Whisper model, baked in so the server never downloads it (~150 MB).
+RUN python -c "from faster_whisper import download_model; download_model('base.en', output_dir='/opt/whisper/base.en')"
+
 COPY wren ./wren
 COPY web ./web
 COPY start.sh ./
@@ -26,6 +32,8 @@ USER wren
 
 ENV WREN_DATA=/data \
     WREN_WEB=/app/web \
+    WREN_WHISPER_MODEL=/opt/whisper/base.en \
+    HF_HUB_OFFLINE=1 \
     WREN_TZ=America/Los_Angeles \
     TZ=America/Los_Angeles \
     PYTHONUNBUFFERED=1

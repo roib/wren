@@ -21,6 +21,8 @@ three-pane desktop layout.
 | `wren/subscriptions.py` | Shows and feed items: subscribe, check a feed, download queue, video copies, retention, delete |
 | `wren/feeds.py` | Show listings via yt-dlp flat playlist extraction (channels → their `UU…` uploads playlist) |
 | `wren/sponsors.py` | Sponsor reads: SponsorBlock lookup (hash prefix), lossless ffmpeg cut, the once-only processing of held-back episodes |
+| `wren/transcribe.py` | Whisper (faster-whisper) transcripts with word times; optional, in the container; transcripts kept 14 days |
+| `wren/ads.py` | Ad reads in a transcript via Claude (`messages.parse`), boundaries snapped to pauses, plausibility checks |
 | `wren/downloader.py` | One download with yt-dlp; `Skipped`, `Unavailable`, `RateLimited` exceptions |
 | `wren/podcast.py` | RSS rendering, feed slugs, the empty-feed placeholder |
 | `wren/artwork.py` | Square show artwork from the channel picture, with the Wren badge (`wren-badge.png`) |
@@ -76,6 +78,15 @@ three-pane desktop layout.
   A survey of popular shows found all SponsorBlock marks in within ~6 hours
   (median 85 min); the first mark isn't always the last, so don't publish on
   the first one. Video copies are cut at keyframes (stream copy, no re-encode).
+  With `ANTHROPIC_API_KEY` set there's no wait: an episode SponsorBlock hasn't
+  marked is transcribed (Whisper `base.en`, CPU) and Claude Haiku finds the ad
+  reads. Tested against SponsorBlock on six episodes: 97% of marked time found,
+  boundaries within seconds; the one wrong pick was "low" confidence, so only
+  "high" is cut. Processing runs in its own thread (`wren-sponsors`), beside
+  downloads. `wren ads-check <video_id>` is a dry run for a show.
+- **faster-whisper's own audio decoding (PyAV)** broke on a version mismatch;
+  `transcribe.py` decodes with ffmpeg instead. Keep faster-whisper and
+  anthropic pinned in the Containerfile, and the model baked into the image.
 - **Apple Podcasts** won't follow an empty feed (hence the placeholder item),
   caches artwork (artwork URLs carry `?v=<mtime>`), and opens `podcast://` links
   with "Follow a Show by URL" filled in.
@@ -130,6 +141,9 @@ WREN_DATA=/tmp/wren-test WREN_WORKER=0 .venv/bin/wren serve --host 127.0.0.1 --p
   back up the DB inside the container as `wren.db.bak-YYYYmmdd-HHMMSS` (sqlite
   backup API), keeping the newest five; pull the new image; restart the unit;
   verify the site. Don't `podman run`/`rm` by hand while the unit owns it.
+- The Claude API key reaches the container as `ANTHROPIC_API_KEY` from a podman
+  secret on the host (`--secret <name>,type=env,target=ANTHROPIC_API_KEY` in the
+  unit), never from the repo or the image.
 - Host-specific details (hostnames, registry, paths) are kept out of the repo.
 - Ask the owner before anything destructive: deleting server data, changing
   ports, volumes or the host setup.

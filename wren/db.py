@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS episodes (
     sponsor_state TEXT,          -- 'pending' (held back, not in feeds yet) or 'done'; NULL if not removing
     sponsor_removed INTEGER,     -- seconds of sponsor reads cut out
     sponsor_segments TEXT,       -- JSON [[start, end], ...] of what was cut, in the original's seconds
+    sponsor_cuts TEXT,           -- JSON [{start, end, source, advertiser, confidence}, ...]: the same, with where each came from
     PRIMARY KEY (video_id, mode)
 );
 
@@ -123,7 +124,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "subtitles" not in cols:
         conn.execute("ALTER TABLE episodes ADD COLUMN subtitles TEXT")
     for col, kind in (("published_at", "INTEGER"), ("sponsor_state", "TEXT"), ("sponsor_removed", "INTEGER"),
-                      ("sponsor_segments", "TEXT")):
+                      ("sponsor_segments", "TEXT"), ("sponsor_cuts", "TEXT")):
         if col not in cols:
             conn.execute(f"ALTER TABLE episodes ADD COLUMN {col} {kind}")
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(shows)")}

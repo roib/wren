@@ -11,6 +11,7 @@ import urllib.parse
 os.environ["WREN_DATA"] = tempfile.mkdtemp(prefix="wren-test-")
 os.environ["WREN_WORKER"] = "0"
 os.environ.pop("WREN_BASE_URL", None)
+os.environ.pop("ANTHROPIC_API_KEY", None)  # transcript mode only where a test turns it on
 
 import pytest  # noqa: E402
 

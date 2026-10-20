@@ -1,0 +1,175 @@
+"""Finding ad reads in transcripts (transcript mode), with Whisper and Claude faked."""
+
+import json
+import types
+
+import pytest
+from conftest import item
+
+from wren import ads, db, sponsors, subscriptions, transcribe
+from wren.config import MEDIA_DIR
+
+SHOW = "https://www.youtube.com/playlist?list=UUtest"
+
+
+def words(*spans):
+    """A transcript of one word per (start, end) span."""
+    return {"segments": [{"start": a, "end": b, "text": f"w{i}", "words": [[a, b, f" w{i}"]]}
+                         for i, (a, b) in enumerate(spans)], "seconds": 1.0}
+
+
+# Speech with pauses at 99-101, 159.5-160.5 and 300-301.
+TRANSCRIPT = words((0, 99), (101, 159.5), (160.5, 300), (301, 600))
+
+
+@pytest.fixture
+def transcript_mode(monkeypatch):
+    """Transcript mode on: SponsorBlock, Whisper and Claude are fakes the test controls."""
+    calls = {"lookup": [], "transcribe": [], "claude": [], "cut": []}
+    fake = types.SimpleNamespace(marks={}, answer=[], transcript=TRANSCRIPT, calls=calls)
+    monkeypatch.setattr(ads, "available", lambda: True)
+    monkeypatch.setattr(transcribe, "available", lambda: True)
+    monkeypatch.setattr(sponsors, "lookup", lambda vid: calls["lookup"].append(vid) or fake.marks.get(vid, []))
+    monkeypatch.setattr(transcribe, "transcribe", lambda path: calls["transcribe"].append(path.name) or fake.transcript)
+    monkeypatch.setattr(ads, "ask_claude", lambda t, title: calls["claude"].append(title) or fake.answer)
+    monkeypatch.setattr(sponsors, "cut", lambda path, segs: calls["cut"].append((path.name, segs)))
+    sponsors._next_try.clear()
+    return fake
+
+
+@pytest.fixture
+def held(fake_feeds, fake_downloader):
+    """A show removing sponsor reads, with one downloaded episode waiting."""
+    fake_feeds.set(SHOW, "Test Show", [item("e1")])
+    s = subscriptions.subscribe(SHOW, backfill=1)
+    subscriptions.update_show(s["id"], skip_sponsors=True)
+    fake_downloader.published["e1"] = 1_000_000
+    subscriptions.download_next()
+    return s
+
+
+def episode(mode="audio"):
+    with db.connect() as conn:
+        return dict(conn.execute("SELECT * FROM episodes WHERE video_id = 'e1' AND mode = ?", (mode,)).fetchone())
+
+
+def ad(start, end, confidence="high", advertiser="Acme"):
+    return ads.Ad(start=start, end=end, advertiser=advertiser, confidence=confidence)
+
+
+def test_snap_moves_boundaries_to_the_middle_of_a_pause():
+    pauses = ads._pauses(TRANSCRIPT)
+    assert pauses == [(99, 101), (159.5, 160.5), (300, 301)]
+    assert ads.snap(98.5, pauses) == 100
+    assert ads.snap(162, pauses) == 160
+    assert ads.snap(200, pauses) == 200  # no pause close by: left alone
+
+
+def test_choose_keeps_only_confident_and_plausible_cuts():
+    cuts, note = ads.choose([ad(99.4, 161, advertiser="Acme"), ad(400, 410, "low", "Joke")], TRANSCRIPT, 600)
+    assert note is None
+    assert cuts == [{"start": 100, "end": 160, "source": "transcript", "advertiser": "Acme", "confidence": "high"}]
+    assert ads.choose([ad(0, 300)], TRANSCRIPT, 3600)[1].startswith("not cut: one ad read was 300s")
+    assert ads.choose([ad(0, 200), ad(300, 500)], TRANSCRIPT, 2000)[1].endswith("more than 15% of the episode")
+
+
+def test_cuts_right_after_downloading(held, transcript_mode):
+    transcript_mode.answer = [ad(99.4, 161), ad(400, 410, "low")]
+    # No eight-hour wait: due as soon as it's downloaded.
+    assert sponsors.process_next(now=episode()["added_at"])
+    calls = transcript_mode.calls
+    assert calls["lookup"] == ["e1"] and calls["transcribe"] == ["e1.m4a"] and calls["claude"] == ["Episode e1"]
+    assert calls["cut"] == [("e1.m4a", [(100, 160)])]
+    ep = episode()
+    assert (ep["sponsor_state"], ep["sponsor_removed"]) == ("done", 60)
+    assert json.loads(ep["sponsor_cuts"]) == {"note": None, "cuts": [
+        {"start": 100, "end": 160, "source": "transcript", "advertiser": "Acme", "confidence": "high"}]}
+    assert transcribe.load("e1") == TRANSCRIPT  # kept, to check the cut afterwards
+
+
+def test_sponsorblock_marks_are_used_when_there_are_some(held, transcript_mode):
+    transcript_mode.marks["e1"] = [(30, 90)]
+    sponsors.process_next(now=episode()["added_at"])
+    assert transcript_mode.calls["transcribe"] == [] and transcript_mode.calls["claude"] == []
+    assert json.loads(episode()["sponsor_cuts"])["cuts"] == [{"start": 30, "end": 90, "source": "sponsorblock"}]
+
+
+def test_sponsorblock_down_falls_back_to_the_transcript(held, transcript_mode, monkeypatch):
+    def down(vid):
+        raise OSError("unreachable")
+    monkeypatch.setattr(sponsors, "lookup", down)
+    transcript_mode.answer = [ad(99.4, 161)]
+    sponsors.process_next(now=episode()["added_at"])
+    assert episode()["sponsor_removed"] == 60
+
+
+def test_video_copy_reuses_the_audio_copys_cuts(held, transcript_mode, fake_downloader):
+    transcript_mode.answer = [ad(99.4, 161)]
+    sponsors.process_next(now=episode()["added_at"])
+    subscriptions.update_show(held["id"], video_copy=True)
+    subscriptions.download_next_copy()
+    for calls in transcript_mode.calls.values():
+        calls.clear()
+    sponsors.process_next(now=episode("video")["added_at"])
+    calls = transcript_mode.calls
+    assert calls["lookup"] == [] and calls["transcribe"] == [] and calls["claude"] == []
+    assert calls["cut"] == [("e1.mp4", [(100, 160)])]
+
+
+def test_implausible_answer_publishes_uncut_with_a_note(held, transcript_mode):
+    transcript_mode.answer = [ad(0, 300)]
+    sponsors.process_next(now=episode()["added_at"])
+    ep = episode()
+    assert (ep["sponsor_state"], ep["sponsor_removed"]) == ("done", 0)
+    assert json.loads(ep["sponsor_cuts"])["note"].startswith("not cut")
+    assert transcript_mode.calls["cut"] == []
+
+
+def test_claude_unreachable_retries_later(held, transcript_mode, monkeypatch):
+    def fail(t, title):
+        raise ads.DetectError("no answer")
+    monkeypatch.setattr(ads, "ask_claude", fail)
+    added = episode()["added_at"]
+    assert sponsors.process_next(now=added)
+    assert episode()["sponsor_state"] == "pending"
+    # The transcript was kept, so the retry doesn't transcribe again.
+    monkeypatch.setattr(ads, "ask_claude", lambda t, title: [])
+    sponsors.process_next(now=added + sponsors.RETRY_SECONDS)
+    assert episode()["sponsor_state"] == "done"
+    assert transcript_mode.calls["transcribe"] == ["e1.m4a"]
+
+
+def test_transcript_is_deleted_with_the_episode(held, transcript_mode):
+    sponsors.process_next(now=episode()["added_at"])
+    assert transcribe.path_for("e1").exists()
+    subscriptions.delete_episode("e1")
+    assert not transcribe.path_for("e1").exists()
+
+
+def test_without_a_key_it_waits_for_sponsorblock(held):
+    assert sponsors.mode() == "sponsorblock"
+    assert sponsors.ready_at(episode()) == 1_000_000 + sponsors.SPONSOR_DELAY_HOURS * 3600
+
+
+def test_ask_claude_request(monkeypatch):
+    anthropic = pytest.importorskip("anthropic")
+    sent = {}
+
+    class Messages:
+        def parse(self, **kwargs):
+            sent.update(kwargs)
+            return types.SimpleNamespace(stop_reason="end_turn", parsed_output=ads.Ads(ads=[ad(1, 2)]), _request_id="r")
+    monkeypatch.setattr(anthropic, "Anthropic", lambda: types.SimpleNamespace(messages=Messages()))
+    assert ads.ask_claude(words((0, 5)), "Show #1") == [ad(1, 2)]
+    assert sent["model"] == "claude-haiku-5-5" and sent["output_format"] is ads.Ads and sent["system"] == ads.RULES
+    assert "[0.0-5.0] w0" in sent["messages"][0]["content"]
+
+
+def test_old_transcripts_are_cleaned_up(tmp_path):
+    transcribe.save("old", {"segments": []})
+    transcribe.save("new", {"segments": []})
+    import os
+    os.utime(transcribe.path_for("old"), (0, 0))
+    assert transcribe.clean_up() == 1
+    assert not transcribe.path_for("old").exists() and transcribe.path_for("new").exists()
+    assert MEDIA_DIR.exists()

@@ -46,6 +46,15 @@ BLOCK_PAUSE_MINUTES = int(os.environ.get("WREN_BLOCK_PAUSE_MINUTES", "120"))
 # out once.
 SPONSOR_DELAY_HOURS = float(os.environ.get("WREN_SPONSOR_DELAY_HOURS", "8"))
 
+# With a Claude API key (ANTHROPIC_API_KEY) and Whisper installed, episodes not
+# marked on SponsorBlock are transcribed locally and Claude finds the ad reads,
+# so there's no need to wait: they're processed right after downloading.
+WHISPER_MODEL = os.environ.get("WREN_WHISPER_MODEL", "base.en")  # a name, or a path to a downloaded model
+WHISPER_THREADS = int(os.environ.get("WREN_WHISPER_THREADS", "6"))  # leave the rest of the CPU to everything else
+ADS_MODEL = os.environ.get("WREN_ADS_MODEL", "claude-haiku-5-5")
+TRANSCRIPT_DIR = DATA_DIR / "transcripts"
+TRANSCRIPT_DAYS = 14  # kept to check cuts afterwards, then deleted
+
 # Set WREN_WORKER=0 to run the server without background downloads/polling.
 WORKER_ENABLED = os.environ.get("WREN_WORKER", "1") != "0"
 # Optional Netscape-format cookies file for yt-dlp, if YouTube starts asking

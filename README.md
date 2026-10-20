@@ -59,11 +59,14 @@ It also helps with:
   - Skips Shorts and clips with a minimum length.
   - Can download only titles matching a filter.
   - Skips private and members-only videos without retrying them.
-- **Removes sponsor reads** (per show, optional). New episodes wait until 8
-  hours after YouTube published them, when the community marks on
-  [SponsorBlock](https://sponsor.ajay.app) are in, then the marked sponsor
-  reads are cut out (losslessly) and the episode joins the feed. Each episode
-  is processed once and never changed after that.
+- **Removes sponsor reads** (per show, optional), cutting them out losslessly
+  before an episode goes into its feed. Each episode is processed once and
+  never changed after that.
+  - With a Claude API key (`ANTHROPIC_API_KEY`), right after downloading: the
+    sponsor reads marked on [SponsorBlock](https://sponsor.ajay.app), or else
+    the ad reads Claude finds in a transcript made on the server with Whisper.
+  - Without one, new episodes wait until 8 hours after YouTube published them,
+    when SponsorBlock's community marks are in, and those are cut.
 - **Tidies up.** Keeps the latest N episodes of each show (or everything).
 - **Raises alerts.** Shows problems, and sends Web Push notifications, when
   downloads are paused, an episode fails for good, a show can't be checked
@@ -169,7 +172,11 @@ Wren is configured with environment variables:
 | `WREN_BLOCK_PAUSE_MINUTES` | `120` | How long to pause when YouTube rate-limits |
 | `WREN_MAX_HEIGHT` | `720` | Maximum video height |
 | `WREN_AUDIO_KBPS` | `0` | Re-encode audio to this bitrate (`0` keeps the original) |
-| `WREN_SPONSOR_DELAY_HOURS` | `8` | For shows removing sponsor reads: hours after publishing before an episode is cut and added to its feed |
+| `WREN_SPONSOR_DELAY_HOURS` | `8` | For shows removing sponsor reads, without an API key: hours after publishing before an episode is cut and added to its feed |
+| `ANTHROPIC_API_KEY` | (unset) | Claude API key: finds ad reads in transcripts, so sponsor reads are cut right after downloading |
+| `WREN_ADS_MODEL` | `claude-haiku-5-5` | Claude model that finds ad reads (about 1¢ an episode) |
+| `WREN_WHISPER_THREADS` | `6` | CPU threads Whisper may use for a transcript |
+| `WREN_WHISPER_MODEL` | `base.en` | Whisper model name or path (the container has `base.en` built in) |
 | `WREN_COOKIES` | unset | Netscape cookies file for yt-dlp, if YouTube asks to confirm you're not a bot |
 | `WREN_BASE_URL` | from each request | Public address used in feed links |
 | `WREN_WORKER` | `1` | `0` runs the server without background checks and downloads |
