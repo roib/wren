@@ -491,7 +491,12 @@ main { margin-top: 16px; }
 .ep.open .collapse { grid-template-rows: 1fr; }
 .collapse-body { min-height: 0; overflow: hidden; opacity: 0; transition: opacity 0.2s; }
 .ep.open .collapse-body { opacity: 1; transition: opacity 0.25s 0.05s; }
-.ep-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 12px 12px 102px; }
+/* Phones: an opened row uses the card's full width, its actions one row of
+   equal buttons, an icon over each label. (Desktop: below.) */
+.ep-actions { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; padding: 2px 14px 14px; }
+.ep-actions .action { flex-direction: column; justify-content: center; gap: 3px; padding: 8px 4px; border-radius: 12px;
+  font-size: 12px; white-space: normal; text-align: center; line-height: 1.2; }
+.ep-actions .action .ic { width: 18px; height: 18px; }
 .ep:not(.open) .ep-actions { visibility: hidden; transition: visibility 0s 0.28s; }
 
 .disclosure {
@@ -543,11 +548,17 @@ button.row { width: 100%; text-align: left; background: none; border: 0; font: i
 .when .ic-wrap { display: inline-block; vertical-align: -2px; margin-right: 2px; }
 .when .ic { width: 13px; height: 13px; }
 /* Lined up with the episode's title, like the actions below it. */
-.ep-when { margin: 0; padding: 0 12px 10px 102px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.ep-when { margin: 0; padding: 0 14px 10px; color: var(--muted); font-size: 13px; line-height: 1.5; }
 /* What was cut from an episode. Full card width on phones (four columns need
    it); lined up with the title on desktop, like the lines above. */
 .cuts { padding: 0 14px 12px; }
-.cuts-head { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+.cuts-head { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 0;
+  border: 0; background: none; color: inherit; font: inherit; font-size: 13px; font-weight: 600; text-align: left;
+  margin-bottom: 4px; cursor: pointer; }
+.cuts-head .chev .ic { width: 16px; height: 16px; transition: transform 0.2s; }
+.cuts.shown .cuts-head .chev .ic { transform: rotate(180deg); }
+/* Phones fold the table away behind its headline. */
+.cuts:not(.shown) table, .cuts:not(.shown) .cuts-note { display: none; }
 .cuts table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
 .cuts th { text-align: left; font-weight: 500; font-size: 11px; letter-spacing: 0.02em; text-transform: uppercase;
   color: var(--muted); padding: 4px 10px 4px 0; border-bottom: 1px solid var(--line-strong); }
@@ -902,6 +913,15 @@ video::cue { background: rgba(0, 0, 0, 0.65); color: #fff; font-size: 0.85em; }
   .hero-actions { flex: 1 1 100%; }
   .ep-thumb { width: 96px; height: 54px; }
   .ep-actions, .ep-when, .cuts { padding-left: 118px; }
+  /* Room enough on desktop: the table stays open, the actions are pills in a row. */
+  .ep-actions { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 0; }
+  .ep-actions .action { flex-direction: row; gap: 6px; padding: 7px 12px; border-radius: 999px; font-size: 14px;
+    white-space: nowrap; }
+  .ep-actions .action .ic { width: 16px; height: 16px; }
+  .cuts:not(.shown) table { display: table; }
+  .cuts:not(.shown) .cuts-note { display: block; }
+  .cuts-head { cursor: default; pointer-events: none; }
+  .cuts-head .chev { display: none; }
 
   /* Settings in two columns. */
   .settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }

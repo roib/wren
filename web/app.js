@@ -660,26 +660,33 @@ function episodeRow(e, { withShow = false, when = fmtWhen } = {}) {
     // Always rendered; collapsed with CSS until the row is open.
     h("div", { class: "collapse" },
       h("div", { class: "collapse-body" },
-        h("p", { class: "ep-when" }, ...downloadedLines(e)),
-        cutsTable(e.sponsors),
+        h("p", { class: "ep-when" }, ...downloadedLines(e, { withShow })),
+        cutsTable(e),
+        // Short labels: on phones these share one row, an icon over each label.
         h("div", { class: "ep-actions" },
           e.copies.map((c) => h("button", { class: "action", onclick: () => openPlayer(e, c) },
-            icon("play"), c.mode === "video" ? "Play video" : "Play audio")),
+            icon("play"), e.copies.length > 1 ? (c.mode === "video" ? "Video" : "Audio") : "Play")),
           withShow ? h("a", { class: "action subtle", href: e.show_id ? `#/show/${e.show_id}` : "#/singles" },
-            icon("chevronRight"), "Go to show") : null,
+            icon("chevronRight"), "Show") : null,
           h("a", { class: "action subtle", href: e.source_url, target: "_blank", rel: "noopener" },
-            icon("external"), /youtube\.com|youtu\.be/.test(e.source_url) ? "YouTube" : "Episode page"),
+            icon("external"), /youtube\.com|youtu\.be/.test(e.source_url) ? "YouTube" : "Web page"),
           h("button", { class: "action subtle danger", onclick: (ev) => deleteEpisode(e, ev.currentTarget) },
             icon("trash"), "Delete")))));
 }
 
 // When the episode came out and when the server got it (each copy, if they differ).
-function downloadedLines(e) {
+function downloadedLines(e, { withShow = false } = {}) {
   const times = e.copies.map((c) => c.added_at);
   const same = Math.max(...times) - Math.min(...times) < 120;
-  const lines = [e.upload_date ? `Published ${fmtDate(e.upload_date)}` : null];
-  if (same) lines.push(`Downloaded ${fmtWhenLong(times[0])}`);
-  else for (const c of e.copies) lines.push(`${c.mode === "video" ? "Video" : "Audio"} downloaded ${fmtWhenLong(c.added_at)}`);
+  const published = e.upload_date ? `Published ${fmtDate(e.upload_date)}` : null;
+  const lines = [];
+  // One line: when it came out and when it arrived (rows that name their show
+  // already give the download time).
+  if (same) lines.push(join(published, withShow ? null : `downloaded ${fmtWhenLong(times[0])}`));
+  else {
+    lines.push(published);
+    for (const c of e.copies) lines.push(`${c.mode === "video" ? "Video" : "Audio"} downloaded ${fmtWhenLong(c.added_at)}`);
+  }
   lines.push(sponsorLine(e.sponsors));
   return lines.filter(Boolean).flatMap((line, i) => (i ? [h("br"), line] : [line]));
 }
@@ -698,11 +705,24 @@ function sponsorLine(sp) {
   return null;
 }
 
+const cutsShown = new Set(); // episodes whose cuts table is open (phones fold it away)
+
 // What was cut: where (in the original video), how long, the advertiser and how it was found.
-function cutsTable(sp) {
+function cutsTable(e) {
+  const sp = e.sponsors;
   if (sp?.state !== "done" || !sp.removed || !sp.cuts?.length) return null;
-  return h("div", { class: "cuts" },
-    h("div", { class: "cuts-head" }, `Removed ${cutsSummary(sp.cuts)} · ${length(sp.removed)} in all`),
+  const shown = cutsShown.has(e.video_id);
+  return h("div", { class: `cuts${shown ? " shown" : ""}` },
+    h("button", {
+      class: "cuts-head", "aria-expanded": String(shown),
+      onclick: (ev) => {
+        const box = ev.currentTarget.closest(".cuts");
+        const now = !box.classList.contains("shown");
+        box.classList.toggle("shown", now);
+        ev.currentTarget.setAttribute("aria-expanded", String(now));
+        if (now) cutsShown.add(e.video_id); else cutsShown.delete(e.video_id);
+      },
+    }, `Removed ${cutsSummary(sp.cuts)} · ${length(sp.removed)} in all`, h("span", { class: "chev" }, icon("chevronDown"))),
     h("table", {},
       h("thead", {}, h("tr", {},
         h("th", {}, "Where"), h("th", {}, "Length"), h("th", {}, "Ad"), h("th", {}, "Source"))),

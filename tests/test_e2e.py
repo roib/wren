@@ -181,14 +181,14 @@ def test_recent_downloads(phone, show):
     playwright.expect(title(phone)).to_have_text("Recent downloads")
     playwright.expect(phone.locator(".section h2").first).to_have_text("Today")
     phone.locator(".ep-head").first.tap()
-    phone.locator(".ep.open").get_by_text("Go to show").tap()
+    phone.locator(".ep.open .ep-actions").get_by_text("Show", exact=True).tap()
     playwright.expect(title(phone)).to_have_text("Test Show")
 
 
 def test_download_times(phone, show):
     phone.goto(f"/#/show/{show['id']}")
     phone.locator(".ep-head").first.tap()
-    playwright.expect(phone.locator(".ep.open .ep-when")).to_contain_text("Downloaded today at")
+    playwright.expect(phone.locator(".ep.open .ep-when")).to_contain_text("· downloaded today at")
     phone.goto("/#/status")
     # Both finished the same minute: one group of two dots, which lists both.
     group = phone.locator(".act-dot.group")
@@ -214,7 +214,10 @@ def test_sponsor_cuts_table(phone, show):
     playwright.expect(phone.locator(".ep", has_text="Episode e2").locator(".badge.cut")).to_have_count(0)
     phone.locator(".ep-head", has_text="Episode e1").tap()
     table = phone.locator(".ep.open .cuts")
+    playwright.expect(table.locator("table")).to_be_hidden()  # folded on phones, behind its headline
     playwright.expect(table.locator(".cuts-head")).to_have_text("Removed 2 sponsor reads and the intro · 2m 26s in all")
+    table.locator(".cuts-head").tap()
+    playwright.expect(table.locator("table")).to_be_visible()
     playwright.expect(table.locator("tbody tr")).to_have_count(3)
     playwright.expect(table.locator("tbody tr").first).to_have_text("0:02–0:119sIntroSponsorBlock")
     playwright.expect(table.locator("tbody tr").nth(1)).to_have_text("13:01–14:221m 21s—SponsorBlock")
