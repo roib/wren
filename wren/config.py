@@ -52,6 +52,11 @@ SPONSOR_DELAY_HOURS = float(os.environ.get("WREN_SPONSOR_DELAY_HOURS", "8"))
 WHISPER_MODEL = os.environ.get("WREN_WHISPER_MODEL", "base.en")  # a name, or a path to a downloaded model
 WHISPER_THREADS = int(os.environ.get("WREN_WHISPER_THREADS", "6"))  # leave the rest of the CPU to everything else
 ADS_MODEL = os.environ.get("WREN_ADS_MODEL", "claude-haiku-5-5")
+# How Claude is reached: "api" (ANTHROPIC_API_KEY), "claude-cli" (a helper on the
+# host running `claude -p` with its owner's login; see host/), or "auto": the
+# helper while it's running, else the API key, else neither.
+ADS_BACKEND = os.environ.get("WREN_ADS_BACKEND", "auto")
+ADS_DIR = DATA_DIR / "ads"  # requests/, answers/ and helper.json, shared with the host helper
 TRANSCRIPT_DIR = DATA_DIR / "transcripts"
 TRANSCRIPT_DAYS = 14  # kept to check cuts afterwards, then deleted
 

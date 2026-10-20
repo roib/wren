@@ -62,9 +62,12 @@ It also helps with:
 - **Removes sponsor reads** (per show, optional), cutting them out losslessly
   before an episode goes into its feed. Each episode is processed once and
   never changed after that.
-  - With a Claude API key (`ANTHROPIC_API_KEY`), right after downloading: the
-    sponsor reads marked on [SponsorBlock](https://sponsor.ajay.app), or else
-    the ad reads Claude finds in a transcript made on the server with Whisper.
+  - With Claude available, right after downloading: the sponsor reads marked
+    on [SponsorBlock](https://sponsor.ajay.app), or else the ad reads Claude
+    finds in a transcript made on the server with Whisper. Claude is reached
+    with an API key (`ANTHROPIC_API_KEY`), or through a small helper on the
+    host that runs `claude -p` with your Claude Code login (see
+    [`host/`](host/README.md)).
   - Without one, new episodes wait until 8 hours after YouTube published them,
     when SponsorBlock's community marks are in, and those are cut.
 - **Tidies up.** Keeps the latest N episodes of each show (or everything).
@@ -175,6 +178,7 @@ Wren is configured with environment variables:
 | `WREN_SPONSOR_DELAY_HOURS` | `8` | For shows removing sponsor reads, without an API key: hours after publishing before an episode is cut and added to its feed |
 | `ANTHROPIC_API_KEY` | (unset) | Claude API key: finds ad reads in transcripts, so sponsor reads are cut right after downloading |
 | `WREN_ADS_MODEL` | `claude-haiku-5-5` | Claude model that finds ad reads (about 1¢ an episode) |
+| `WREN_ADS_BACKEND` | `auto` | How Claude is reached: `claude-cli` (the [host helper](host/README.md)), `api` (the key), or `auto` (the helper while it's running, else the key) |
 | `WREN_WHISPER_THREADS` | `6` | CPU threads Whisper may use for a transcript |
 | `WREN_WHISPER_MODEL` | `base.en` | Whisper model name or path (the container has `base.en` built in) |
 | `WREN_COOKIES` | unset | Netscape cookies file for yt-dlp, if YouTube asks to confirm you're not a bot |

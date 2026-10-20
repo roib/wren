@@ -1,0 +1,11 @@
+# Runs wren-claude.service as soon as Wren asks for something.
+[Unit]
+Description=Watch for Wren's ad-read requests
+
+[Path]
+# The same folder as WREN_DATA_DIR in wren-claude.service, plus /ads/requests.
+PathModified=/path/to/wren-data/ads/requests
+Unit=wren-claude.service
+
+[Install]
+WantedBy=default.target

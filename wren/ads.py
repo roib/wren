@@ -8,12 +8,14 @@ words, and a result that looks implausible isn't cut at all: cutting
 conversation is worse than leaving an ad in.
 """
 
+import json
 import os
+import time
 from typing import Literal
 
 from pydantic import BaseModel
 
-from .config import ADS_MODEL
+from .config import ADS_BACKEND, ADS_DIR, ADS_MODEL
 
 MAX_AD_SECONDS = 4 * 60  # longer than any single read seen; likely a mistake
 MAX_SHARE = 0.15  # of the episode
@@ -54,7 +56,23 @@ class DetectError(Exception):
     """Claude couldn't be asked, or declined to answer."""
 
 
-def available() -> bool:
+class Pending(Exception):
+    """Asked the host helper; its answer isn't there yet."""
+
+
+# The answer's shape, for `claude -p --json-schema` (kept flat: no $refs).
+SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["ads"],
+    "properties": {"ads": {"type": "array", "items": {
+        "type": "object", "additionalProperties": False, "required": ["start", "end", "advertiser", "confidence"],
+        "properties": {"start": {"type": "number"}, "end": {"type": "number"}, "advertiser": {"type": "string"},
+                       "confidence": {"type": "string", "enum": ["high", "medium", "low"]}}}}},
+}
+
+HELPER_STALE = 30 * 60  # the helper refreshes helper.json every 10 minutes
+
+
+def _api_available() -> bool:
     if not os.environ.get("ANTHROPIC_API_KEY"):
         return False
     try:
@@ -64,11 +82,68 @@ def available() -> bool:
     return True
 
 
+def helper_status() -> dict | None:
+    """The host helper's last report ({"at", "ok", "error"}), or None if it was never set up."""
+    try:
+        return json.loads((ADS_DIR / "helper.json").read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def helper_ok() -> bool:
+    status = helper_status()
+    return bool(status and status.get("ok") and time.time() - status.get("at", 0) < HELPER_STALE)
+
+
+def backend() -> str | None:
+    """How Claude will be asked right now: "claude-cli", "api", or None."""
+    if ADS_BACKEND in ("auto", "claude-cli") and helper_ok():
+        return "claude-cli"
+    if ADS_BACKEND in ("auto", "api") and _api_available():
+        return "api"
+    return None
+
+
+def available() -> bool:
+    return backend() is not None
+
+
 def transcript_text(transcript: dict) -> str:
     return "\n".join(f"[{s['start']:.1f}-{s['end']:.1f}] {s['text']}" for s in transcript["segments"])
 
 
-def ask_claude(transcript: dict, title: str) -> list[Ad]:
+def ask_claude(transcript: dict, title: str, video_id: str) -> list[Ad]:
+    """Claude's list of ad reads. Raises Pending while the host helper is on it."""
+    if backend() == "claude-cli":
+        return _ask_helper(transcript, title, video_id)
+    return _ask_api(transcript, title)
+
+
+def _write(path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(json.dumps(data))
+    tmp.replace(path)  # never a half-written file for the other side
+
+
+def _ask_helper(transcript: dict, title: str, video_id: str) -> list[Ad]:
+    answer_path = ADS_DIR / "answers" / f"{video_id}.json"
+    request_path = ADS_DIR / "requests" / f"{video_id}.json"
+    if answer_path.exists():
+        answer = json.loads(answer_path.read_text())
+        answer_path.unlink(missing_ok=True)
+        request_path.unlink(missing_ok=True)
+        if not answer.get("ok"):
+            raise DetectError(f"helper: {answer.get('error') or 'failed'}")
+        return Ads.model_validate(answer["result"]).ads
+    if not request_path.exists():
+        _write(request_path, {"id": video_id, "model": ADS_MODEL, "system": RULES, "schema": SCHEMA,
+                              "prompt": f"Episode: {title}\n\nTRANSCRIPT\n{transcript_text(transcript)}",
+                              "created_at": int(time.time())})
+    raise Pending(video_id)
+
+
+def _ask_api(transcript: dict, title: str) -> list[Ad]:
     import anthropic
     client = anthropic.Anthropic()
     response = client.messages.parse(

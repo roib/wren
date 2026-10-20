@@ -22,7 +22,8 @@ three-pane desktop layout.
 | `wren/feeds.py` | Show listings via yt-dlp flat playlist extraction (channels → their `UU…` uploads playlist) |
 | `wren/sponsors.py` | Sponsor reads: SponsorBlock lookup (hash prefix), lossless ffmpeg cut, the once-only processing of held-back episodes |
 | `wren/transcribe.py` | Whisper (faster-whisper) transcripts with word times; optional, in the container; transcripts kept 14 days |
-| `wren/ads.py` | Ad reads in a transcript via Claude (`messages.parse`), boundaries snapped to pauses, plausibility checks |
+| `wren/ads.py` | Ad reads in a transcript via Claude (API `messages.parse`, or the host helper's request/answer files), boundaries snapped to pauses, plausibility checks |
+| `host/` | `wren-claude-helper` + systemd user units: answers Wren's requests with `claude -p` (tools off) on the host, with the owner's login |
 | `wren/downloader.py` | One download with yt-dlp; `Skipped`, `Unavailable`, `RateLimited` exceptions |
 | `wren/podcast.py` | RSS rendering, feed slugs, the empty-feed placeholder |
 | `wren/artwork.py` | Square show artwork from the channel picture, with the Wren badge (`wren-badge.png`) |
@@ -84,6 +85,11 @@ three-pane desktop layout.
   boundaries within seconds; the one wrong pick was "low" confidence, so only
   "high" is cut. Processing runs in its own thread (`wren-sponsors`), beside
   downloads. `wren ads-check <video_id>` is a dry run for a show.
+- **The host helper** (`host/`) shares files with Wren through the data folder
+  (`/data/ads/`), never SSH or a login in the container. `claude -p` runs with
+  `--tools ""` from an empty directory and `--json-schema` (the reply is in
+  `structured_output`). `helper.json` is its heartbeat: fresh and `ok` means
+  Wren uses it; stale or logged out means fallback plus an alert.
 - **faster-whisper's own audio decoding (PyAV)** broke on a version mismatch;
   `transcribe.py` decodes with ffmpeg instead. Keep faster-whisper and
   anthropic pinned in the Containerfile, and the model baked into the image.

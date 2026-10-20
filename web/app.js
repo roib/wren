@@ -442,7 +442,8 @@ function workerLine(data) {
   if (w.paused_until) text = `Paused · YouTube is rate-limiting until ${fmtClock(w.paused_until)}`;
   else if (w.activity === "checking shows") { text = "Checking for new episodes…"; busy = true; }
   else if (w.processing) {
-    const step = { transcribing: "Transcribing", "finding ad reads": "Finding ad reads in", cutting: "Removing sponsor reads from" };
+    const step = { transcribing: "Transcribing", "finding ad reads": "Finding ad reads in",
+      "waiting for Claude": "Waiting for Claude on the server for", cutting: "Removing sponsor reads from" };
     text = `${step[w.processing.step] || "Checking sponsor reads in"} “${w.processing.title}”`;
     busy = true;
   }

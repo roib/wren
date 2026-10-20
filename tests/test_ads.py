@@ -31,7 +31,7 @@ def transcript_mode(monkeypatch):
     monkeypatch.setattr(transcribe, "available", lambda: True)
     monkeypatch.setattr(sponsors, "lookup", lambda vid: calls["lookup"].append(vid) or fake.marks.get(vid, []))
     monkeypatch.setattr(transcribe, "transcribe", lambda path: calls["transcribe"].append(path.name) or fake.transcript)
-    monkeypatch.setattr(ads, "ask_claude", lambda t, title: calls["claude"].append(title) or fake.answer)
+    monkeypatch.setattr(ads, "ask_claude", lambda t, title, vid: calls["claude"].append(title) or fake.answer)
     monkeypatch.setattr(sponsors, "cut", lambda path, segs: calls["cut"].append((path.name, segs)))
     sponsors._next_try.clear()
     return fake
@@ -126,14 +126,14 @@ def test_implausible_answer_publishes_uncut_with_a_note(held, transcript_mode):
 
 
 def test_claude_unreachable_retries_later(held, transcript_mode, monkeypatch):
-    def fail(t, title):
+    def fail(t, title, vid):
         raise ads.DetectError("no answer")
     monkeypatch.setattr(ads, "ask_claude", fail)
     added = episode()["added_at"]
     assert sponsors.process_next(now=added)
     assert episode()["sponsor_state"] == "pending"
     # The transcript was kept, so the retry doesn't transcribe again.
-    monkeypatch.setattr(ads, "ask_claude", lambda t, title: [])
+    monkeypatch.setattr(ads, "ask_claude", lambda t, title, vid: [])
     sponsors.process_next(now=added + sponsors.RETRY_SECONDS)
     assert episode()["sponsor_state"] == "done"
     assert transcript_mode.calls["transcribe"] == ["e1.m4a"]
@@ -160,7 +160,8 @@ def test_ask_claude_request(monkeypatch):
             sent.update(kwargs)
             return types.SimpleNamespace(stop_reason="end_turn", parsed_output=ads.Ads(ads=[ad(1, 2)]), _request_id="r")
     monkeypatch.setattr(anthropic, "Anthropic", lambda: types.SimpleNamespace(messages=Messages()))
-    assert ads.ask_claude(words((0, 5)), "Show #1") == [ad(1, 2)]
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
+    assert ads.ask_claude(words((0, 5)), "Show #1", "x") == [ad(1, 2)]
     assert sent["model"] == "claude-haiku-5-5" and sent["output_format"] is ads.Ads and sent["system"] == ads.RULES
     assert "[0.0-5.0] w0" in sent["messages"][0]["content"]
 

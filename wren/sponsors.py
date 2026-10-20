@@ -39,6 +39,7 @@ MIN_SEGMENT = 1.0  # seconds; shorter marks aren't worth a cut
 # publish the episode uncut rather than hold it forever.
 GIVE_UP_SECONDS = 12 * 3600
 RETRY_SECONDS = 15 * 60
+ANSWER_POLL_SECONDS = 60  # how often to look for the host helper's answer
 
 _next_try: dict[tuple[str, str], float] = {}  # (video_id, mode) -> after a failed attempt
 
@@ -153,8 +154,8 @@ def decide(ep: dict) -> dict:
         transcript = transcribe.transcribe(MEDIA_DIR / ep["file"])
         transcribe.save(ep["video_id"], transcript)
         log.info("Transcribed %s in %ss", ep["title"], transcript["seconds"])
-    _step(ep, "finding ad reads")
-    cuts, note = ads.choose(ads.ask_claude(transcript, ep["title"]), transcript, ep.get("duration"))
+    _step(ep, "waiting for Claude" if ads.backend() == "claude-cli" else "finding ad reads")
+    cuts, note = ads.choose(ads.ask_claude(transcript, ep["title"], ep["video_id"]), transcript, ep.get("duration"))
     if note:
         log.warning("%s: %s", ep["title"], note)
     return {"cuts": cuts, "note": note}
@@ -207,6 +208,13 @@ def _process_next(now: float) -> bool:
         except FileNotFoundError:
             # Deleted while it was being processed (by hand, or a keep-last limit).
             log.info("%s was removed before its sponsor reads were cut", ep["title"])
+        except ads.Pending:
+            if now < ready_at(ep) + GIVE_UP_SECONDS:
+                _next_try[key] = now + ANSWER_POLL_SECONDS  # asked; look again shortly
+                return True
+            log.warning("Publishing %s uncut: no answer from Claude on the server", ep["title"])
+            with db.connect() as conn:
+                conn.execute("UPDATE episodes SET sponsor_state = 'done' WHERE video_id = ? AND mode = ?", key)
         except Exception as e:
             if now < ready_at(ep) + GIVE_UP_SECONDS:
                 _next_try[key] = now + RETRY_SECONDS

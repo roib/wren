@@ -24,8 +24,8 @@ from pathlib import Path
 
 import yt_dlp
 
-from . import db, downloader, push, sponsors, subscriptions, transcribe
-from .config import (ACTIVE_HOURS, BLOCK_PAUSE_MINUTES, MAX_DOWNLOADS_PER_HOUR, MEDIA_DIR,
+from . import ads, db, downloader, push, sponsors, subscriptions, transcribe
+from .config import (ACTIVE_HOURS, ADS_BACKEND, BLOCK_PAUSE_MINUTES, MAX_DOWNLOADS_PER_HOUR, MEDIA_DIR,
                      POLL_JITTER_MINUTES, POLL_MINUTES, SPONSOR_DELAY_HOURS, TIMEZONE)
 
 log = logging.getLogger("wren")
@@ -177,6 +177,22 @@ def quiet_shows(today: dt.date) -> list[tuple[dict, int, str]]:
     return out
 
 
+def check_helper() -> None:
+    """Alert when the host helper that runs `claude -p` stops working (only if it was ever set up)."""
+    status = ads.helper_status()
+    if status is None or ADS_BACKEND == "api":
+        return
+    if ads.helper_ok():
+        push.resolve("claudehelper")
+        return
+    if not status.get("ok") and status.get("error"):
+        body = f"{status['error']}. Until it's back, sponsor reads wait for SponsorBlock."
+    else:
+        seen = dt.datetime.fromtimestamp(status.get("at", 0), TIMEZONE).strftime("%a %-I:%M %p")
+        body = f"No word from it since {seen}. Until it's back, sponsor reads wait for SponsorBlock."
+    push.alert("claudehelper", "Claude on the server isn't answering", body)
+
+
 # ---- worker ----------------------------------------------------------------------
 
 class Worker:
@@ -201,6 +217,7 @@ class Worker:
         self._processing: threading.Thread | None = None
         self._process_wake = threading.Event()
         self._cleaned_at = 0.0
+        self._helper_checked_at = 0.0
 
     def start(self) -> None:
         _recover()
@@ -253,6 +270,7 @@ class Worker:
             "active_hours": list(ACTIVE_HOURS),
             "sponsor_delay_hours": SPONSOR_DELAY_HOURS,
             "sponsor_mode": sponsors.mode(),
+            "ads_backend": ads.backend(),
             "processing": sponsors.current,
             "timezone": TIMEZONE.key,
             "active_now": is_active(now),
@@ -263,10 +281,14 @@ class Worker:
         }
 
     def _process_once(self) -> bool:
-        """Cut one held-back episode that's due; tidy old transcripts hourly."""
+        """Cut one held-back episode that's due; tidy old transcripts hourly;
+        check on the host helper every 10 minutes."""
         if time.time() - self._cleaned_at > 3600:
             self._cleaned_at = time.time()
             transcribe.clean_up()
+        if time.time() - self._helper_checked_at > 600:
+            self._helper_checked_at = time.time()
+            check_helper()
         return sponsors.process_next()
 
     def _process_loop(self) -> None:

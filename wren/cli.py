@@ -41,7 +41,15 @@ def _ads_check(parser, video_id: str) -> None:
     rate = (ep["duration"] or 0) / transcript["seconds"] if transcript["seconds"] else 0
     print(f"transcribed in {transcript['seconds']:.0f}s ({rate:.0f}x real time)")
     t0 = time.time()
-    found = ads.ask_claude(transcript, ep["title"])
+    print(f"asking Claude ({ads.backend()})")
+    while True:
+        try:
+            found = ads.ask_claude(transcript, ep["title"], video_id)
+            break
+        except ads.Pending:
+            if time.time() - t0 > 15 * 60:
+                parser.exit(1, "wren: no answer from the helper on the host in 15 minutes\n")
+            time.sleep(5)
     print(f"Claude answered in {time.time() - t0:.0f}s")
     cuts, note = ads.choose(found, transcript, ep["duration"])
     for a in found:

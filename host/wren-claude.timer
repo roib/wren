@@ -1,0 +1,12 @@
+# Runs the helper every 10 minutes anyway: it reports to Wren that it's running
+# and logged in (helper.json), and picks up anything the path unit missed.
+[Unit]
+Description=Check in with Wren every 10 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+Unit=wren-claude.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,76 @@
+#!/bin/sh
+# Answers Wren's "find the ad reads" requests with `claude -p`, using the Claude
+# Code login of the user running it. For a host whose Wren container keeps its
+# data in DATA_DIR (mounted as /data): Wren writes DATA_DIR/ads/requests/<id>.json,
+# this writes DATA_DIR/ads/answers/<id>.json, and reports in DATA_DIR/ads/helper.json.
+#
+# Usage: wren-claude-helper DATA_DIR      (run by wren-claude.path / .timer)
+#
+# Claude runs with every tool turned off, from an empty directory: whatever a
+# transcript says, all it can do is answer in text.
+
+set -u
+data=${1:?usage: wren-claude-helper DATA_DIR}
+dir="$data/ads"
+claude=${CLAUDE:-claude}
+mkdir -p "$dir/requests" "$dir/answers"
+
+# One run at a time.
+exec 9>"$dir/.lock"
+flock -n 9 || exit 0
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+mkdir "$work/empty"  # where claude runs: nothing in it
+
+# Write a file so the other side never sees it half-written.
+put() {  # put PATH < content
+    cat > "$1.tmp.$$" && mv "$1.tmp.$$" "$1"
+}
+
+report() {  # report OK ERROR
+    jq -n --argjson ok "$1" --arg error "$2" --arg version "$("$claude" --version 2>/dev/null | head -n 1)" \
+        '{at: now | floor, ok: $ok, error: (if $error == "" then null else $error end), claude: $version}' |
+        put "$dir/helper.json"
+}
+
+# Logged in? (Checked every run, so Wren hears about it even with nothing to do.)
+if ! "$claude" auth status 2>/dev/null | jq -e '.loggedIn == true' > /dev/null; then
+    report false "Claude Code on the server isn't logged in"
+    exit 0
+fi
+
+for request in "$dir"/requests/*.json; do
+    [ -e "$request" ] || continue
+    id=$(basename "$request" .json)
+    answer="$dir/answers/$id.json"
+    case "$id" in
+        "" | *[!A-Za-z0-9_-]*) rm -f "$request"; continue ;;  # not a video id
+    esac
+    if [ "$(wc -c < "$request")" -gt 4000000 ]; then
+        jq -n '{ok: false, error: "request too large"}' | put "$answer"
+        rm -f "$request"; continue
+    fi
+    [ -e "$answer" ] && continue  # answered; Wren hasn't collected it yet
+
+    model=$(jq -r '.model // "claude-haiku-5-5"' "$request")
+    system=$(jq -r '.system' "$request")
+    schema=$(jq -c '.schema' "$request")
+    started=$(date +%s)
+    jq -r '.prompt' "$request" > "$work/prompt"
+    if (cd "$work/empty" && timeout 600 "$claude" -p --model "$model" --tools "" --strict-mcp-config \
+            --no-session-persistence --output-format json --json-schema "$schema" --system-prompt "$system" \
+            < "$work/prompt" > "$work/out" 2> "$work/err") &&
+        jq -e '.is_error == false and .structured_output != null' "$work/out" > /dev/null; then
+        jq --argjson started "$started" \
+            '{ok: true, result: .structured_output, seconds: ((now | floor) - $started), cost_usd: .total_cost_usd}' \
+            "$work/out" | put "$answer"
+    else
+        error=$(jq -r '.result // empty' "$work/out" 2>/dev/null | head -c 300)
+        [ -n "$error" ] || error=$(head -c 300 "$work/err")
+        # This request failed; Wren retries it. The helper itself is still fine.
+        jq -n --arg error "${error:-claude -p failed}" '{ok: false, error: $error}' | put "$answer"
+    fi
+done
+
+report true ""
