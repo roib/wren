@@ -39,7 +39,7 @@ enabling the units.
 
    ```sh
    install -m 755 wren-claude-helper ~/.local/bin/
-   mkdir -p ~/.config/systemd/user /path/to/wren-data/ads/requests
+   mkdir -p ~/.config/systemd/user
    cp wren-claude.service wren-claude.path wren-claude.timer ~/.config/systemd/user/
    systemctl --user daemon-reload
    systemctl --user enable --now wren-claude.path wren-claude.timer
