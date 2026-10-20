@@ -270,6 +270,8 @@ def _check_feed(show: dict) -> int:
                     conn.execute("UPDATE feed_items SET title = ? WHERE show_id = ? AND item_id = ?",
                                  (i.title, show["id"], i.item_id))
                     conn.execute("UPDATE episodes SET title = ? WHERE video_id = ?", (i.title, i.item_id))
+            if feed.items:
+                _replace_old_chapters(conn, show, {i.item_id for i in feed.items})
         # Items recorded before dates were kept get theirs filled in.
         for i in feed.items:
             if i.item_id in seen and i.published:
@@ -286,6 +288,24 @@ def _check_feed(show: dict) -> int:
         log.info("%s: %d new episode(s)", show["name"], queued)
     ensure_art(show)
     return queued
+
+
+def _replace_old_chapters(conn, show: dict, current: set[str]) -> None:
+    """A book's chapters were cut differently this time (its epub placed them):
+    the old ones, from files still there, go, so nothing is in the book twice.
+    (Chapters from files since deleted stay: they're all that's left of them.)"""
+    old = conn.execute("SELECT item_id, url FROM feed_items WHERE show_id = ? AND status != 'skipped'",
+                       (show["id"],)).fetchall()
+    gone = [r["item_id"] for r in old if r["item_id"] not in current
+            and (books.BOOKS_DIR / books.item_part(r["url"])).is_file()]
+    for item_id in gone:
+        for ep in conn.execute("SELECT video_id, mode, file, thumb, subtitles FROM episodes WHERE video_id = ?",
+                               (item_id,)).fetchall():
+            _remove_episode(conn, ep)
+        conn.execute("UPDATE feed_items SET status = 'skipped', error = 'replaced' WHERE show_id = ? AND item_id = ?",
+                     (show["id"], item_id))
+    if gone:
+        log.info("%s: replaced %d chapter(s) cut before", show["name"], len(gone))
 
 
 def ensure_art(show: dict) -> None:

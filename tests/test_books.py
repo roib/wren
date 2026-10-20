@@ -160,3 +160,134 @@ def test_reading_again_renames_chapters(book, monkeypatch):
         books.Chapter(c.number, c.title.upper(), c.part, c.start, c.end) for c in b["chapters"]]})
     subscriptions.check_feeds([show["id"]])
     assert [e["title"] for e in chapters(show["id"])] == ["OPENING CREDITS", "CHAPTER ONE", "PART 2"]
+
+
+# ---- chapters from the epub -----------------------------------------------------------
+
+def make_epub(path, chapters, title="The Epub Title", author="E. Author"):
+    """A minimal EPUB 2: [(toc title, text)] in reading order."""
+    import zipfile
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("mimetype", "application/epub+zip")
+        z.writestr("META-INF/container.xml", '<?xml version="1.0"?><container version="1.0" '
+                   'xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles>'
+                   '<rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>'
+                   "</rootfiles></container>")
+        items = "".join(f'<item id="c{n}" href="Text/c{n}.html" media-type="application/xhtml+xml"/>'
+                        for n in range(len(chapters)))
+        z.writestr("OEBPS/content.opf", '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" '
+                   'version="2.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+                   f"<dc:title>{title}</dc:title><dc:creator>{author}</dc:creator></metadata>"
+                   f'<manifest><item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>{items}</manifest>'
+                   "</package>")
+        points = "".join(f'<navPoint id="p{n}"><navLabel><text>{t}</text></navLabel><content src="Text/c{n}.html"/>'
+                         "</navPoint>" for n, (t, _) in enumerate(chapters))
+        z.writestr("OEBPS/toc.ncx", '<?xml version="1.0"?><ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" '
+                   f'version="2005-1"><navMap>{points}</navMap></ncx>')
+        for n, (t, text) in enumerate(chapters):
+            z.writestr(f"OEBPS/Text/c{n}.html", f'<html xmlns="http://www.w3.org/1999/xhtml"><body><h1>{t}</h1>'
+                       f"<p>{text}</p></body></html>")
+
+
+def text(name, n=400):
+    return " ".join(f"{name}{i}" for i in range(n))
+
+
+def spoken(*runs):
+    """A fake Whisper transcript: [(start, end, text)] runs, words spread evenly over each."""
+    segs = []
+    for start, end, said in runs:
+        ws = said.split()
+        step = (end - start) / len(ws)
+        segs.append({"start": start, "end": end, "text": said,
+                     "words": [[start + i * step, start + (i + 1) * step, w] for i, w in enumerate(ws)]})
+    return {"segments": segs, "seconds": 0}
+
+
+@pytest.fixture
+def epub_book(monkeypatch):
+    """Two files; the epub's prologue and chapter 1 in the first, a part page and
+    chapters 2 and 4 in the second; chapter 3 and the back matter nowhere in the audio."""
+    from wren import transcribe
+    make_part(BOOKS_DIR / "Epub Book" / "Part 1.m4b", 6, [(0, 3, "Part 01"), (3, 6, "Part 02")])
+    make_part(BOOKS_DIR / "Epub Book" / "Part 2.m4b", 6, [(0, 6, "Part 01")])
+    make_epub(BOOKS_DIR / "Epub Book" / "book.epub", [
+        ("Copyright", "all rights reserved"), ("Prologue", text("pro")), ("Chapter 1: First", text("one")),
+        ("Part II: Later", text("parttwo", 20)), ("Chapter 2: Second", text("two")),
+        ("Chapter 3: Third", text("three")), ("Chapter 4: Fourth", text("four")), ("About the Author", text("bio"))])
+    heard = {"Part 1.m4b": spoken((0.2, 0.6, "presents an audiobook"), (1.0, 2.6, text("pro", 80)),
+                                  (3.6, 5.8, text("one", 80))),
+             "Part 2.m4b": spoken((0.2, 0.8, "part two of two"), (2.0, 2.5, text("parttwo", 20)),
+                                  (2.8, 3.9, text("two", 80)), (4.6, 5.8, text("four", 80)))}
+    calls = []
+    monkeypatch.setattr(transcribe, "available", lambda: True)
+    monkeypatch.setattr(transcribe, "transcribe", lambda path: calls.append(path.name) or heard[path.name])
+    return calls
+
+
+def test_epub_chapters_are_found_in_the_audio(epub_book):
+    source = "book:Epub Book"
+    before = books.read(source)
+    assert (before["title"], before["author"], before["placing"], before["chapters"]) == (
+        "The Epub Title", "E. Author", True, [])
+    assert before["contents"] == ["Prologue", "Chapter 1: First", "Chapter 2: Second", "Chapter 3: Third",
+                                  "Chapter 4: Fourth", "About the Author"]
+    assert books.needs_placing(source) and books.fetch(source).items == []
+
+    books.place_chapters(source)
+    assert not books.needs_placing(source)
+    chs = books.read(source)["chapters"]
+    # Chapter 3 wasn't found: it's in chapter 2. The back matter isn't anywhere.
+    assert [c.title for c in chs] == ["Prologue", "Chapter 1: First",
+                                      "Part II: Later · Chapter 2: Second & Chapter 3: Third", "Chapter 4: Fourth"]
+    # The credits before the prologue go with it; chapter 1 runs on into the second file.
+    assert (chs[0].part, chs[0].start) == ("Epub Book/Part 1.m4b", 0.0)
+    assert chs[1].part.endswith("Part 1.m4b") and 2.6 <= chs[1].start <= 3.6 and chs[1].end == pytest.approx(6, abs=0.1)
+    assert [(p, s) for p, s, _ in chs[1].more] == [("Epub Book/Part 2.m4b", 0.0)] and chs[1].more[0][2] == pytest.approx(0.8)
+    assert chs[2].part.endswith("Part 2.m4b") and chs[2].start == pytest.approx(0.8) and not chs[2].more
+    assert chs[3].end == pytest.approx(6, abs=0.1)
+    assert epub_book == ["Part 1.m4b", "Part 2.m4b"]
+    books.place_chapters(source)  # again: the transcripts were kept
+    assert epub_book == ["Part 1.m4b", "Part 2.m4b"]
+
+
+def test_epub_chapters_replace_the_ones_from_marks(epub_book, monkeypatch):
+    from wren import transcribe
+    monkeypatch.setattr(transcribe, "available", lambda: False)  # no Whisper yet: the files' marks
+    show = subscriptions.subscribe("book:Epub Book")
+    while subscriptions.download_next():
+        pass
+    assert [e["title"] for e in chapters(show["id"])] == ["Part 1", "Part 2", "Part 3"]
+    old = [MEDIA_DIR / e["file"] for e in chapters(show["id"])]
+
+    monkeypatch.setattr(transcribe, "available", lambda: True)
+    books.place_chapters(show["feed_url"])
+    subscriptions.check_feeds([show["id"]])
+    while subscriptions.download_next():
+        pass
+    eps = chapters(show["id"])
+    assert [e["title"] for e in eps] == ["Prologue", "Chapter 1: First",
+                                         "Part II: Later · Chapter 2: Second & Chapter 3: Third", "Chapter 4: Fourth"]
+    assert not any(f.exists() for f in old)
+    # Chapter 1 was joined from both files: its length is both pieces'.
+    assert round(length(MEDIA_DIR / eps[1]["file"]), 1) == pytest.approx(eps[1]["duration"], abs=1)
+    assert length(MEDIA_DIR / eps[1]["file"]) > 6 - 3.6 + 0.5
+
+
+def test_too_few_epub_chapters_found_keeps_the_marks(epub_book, monkeypatch):
+    from wren import transcribe
+    monkeypatch.setattr(transcribe, "transcribe", lambda path: spoken((0.5, 1.0, "nothing from the book")))
+    result = books.place_chapters("book:Epub Book")
+    assert result["chapters"] == [] and "0 of 6" in result["note"]
+    assert [c.title for c in books.read("book:Epub Book")["chapters"]] == ["Part 1", "Part 2", "Part 3"]
+
+
+def test_worker_places_a_books_chapters(epub_book):
+    from wren import worker
+    show = subscriptions.subscribe("book:Epub Book")
+    assert subscriptions.download_next() is False  # nothing until its chapters are found
+    w = worker.Worker()
+    assert w._place_next_book() and w._refresh == {show["id"]}
+    subscriptions.check_feeds([show["id"]])
+    assert len(chapters(show["id"])) == 0 and subscriptions.download_next() == "book"
+    assert w._place_next_book() is False

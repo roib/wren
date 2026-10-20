@@ -503,6 +503,7 @@ function showRows(shows) {
 }
 
 function showStatus(s) {
+  if (s.preparing) return h("span", { class: "row-status" }, h("span", { class: "spinner" }), `Finding chapters · ${s.preparing}`);
   if (s.downloading) return h("span", { class: "row-status" }, h("span", { class: "spinner" }), "Downloading…");
   if (s.last_error) return h("span", { class: "row-status warn" }, icon("alert"), friendlyError(s.last_error));
   if (s.failed) return h("span", { class: "row-status warn" }, icon("alert"), `${plural(s.failed, "download")} failed`);
@@ -578,7 +579,8 @@ function bookHero(s) {
       h("div", { class: "hero-info" },
         showBadges(s),
         s.author ? h("div", { class: "hero-meta" }, `By ${s.author}`) : null,
-        h("div", { class: "hero-meta" }, join(plural(s.episodes, "chapter"), fmtBytes(s.bytes))))),
+        h("div", { class: "hero-meta" }, join(plural(s.episodes, "chapter"), fmtBytes(s.bytes))),
+        s.preparing ? h("div", { class: "hero-meta" }, h("span", { class: "spinner" }), `Finding chapters · ${s.preparing}`) : null)),
     feedButtons(s.feed_path, "Open in Podcasts"),
     h("div", { class: "hero-actions" },
       h("button", { class: "action", onclick: () => showCommand(s, "refresh", `Reading ${s.name}’s files again…`) },
@@ -1115,6 +1117,9 @@ function bookResult(r) {
       h("div", { class: "row-text" },
         h("div", { class: "result-title" }, r.title),
         h("div", { class: "row-meta" }, join(r.author, plural(r.chapters.length, "chapter"), fmtDuration(r.duration))))),
+    // Its chapters will be found in the audio from the book's text: Whisper takes about 1/40 of its length.
+    r.placing ? h("p", { class: "setting-hint" }, `Chapters from ${r.epub}: Wren transcribes the audio and finds where `
+      + `each chapter begins (about ${Math.max(1, Math.round(r.duration / 40 / 60))} min) before cutting them.`) : null,
     h("ul", { class: "preview" }, r.chapters.slice(0, PREVIEW_CHAPTERS).map((c) => h("li", {},
       h("span", { class: "preview-title" }, c.title),
       h("span", { class: "preview-meta" }, fmtDuration(c.duration) || ""))),
@@ -1131,7 +1136,8 @@ async function addBook(r, btn) {
   btn.textContent = "Adding…";
   try {
     const show = await api("/api/shows", { method: "POST", body: { url: r.url } });
-    toast(`Added ${show.name}. Its ${plural(r.chapters.length, "chapter")} are being cut into episodes.`, 5000);
+    toast(r.placing ? `Added ${show.name}. Its chapters appear once Wren has found them in the audio.`
+      : `Added ${show.name}. Its ${plural(r.chapters.length, "chapter")} are being cut into episodes.`, 5000);
     Object.assign(add, { url: "", result: null, error: null, subs: {} });
     navigate(`#/show/${show.id}`);
   } catch (err) {

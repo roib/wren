@@ -67,8 +67,16 @@ def _show_summaries() -> list[dict]:
             downloading=next((i["title"] for i, st in zip(queued, states) if st == "downloading"), None),
             retrying=states.count("retrying"),
             premieres=states.count("premiere"),
+            preparing=_book_progress(s) if s["kind"] == "book" else None,
         )
     return shows
+
+
+def _book_progress(show: dict) -> str | None:
+    """What's being done to a book before its chapters can be cut, if anything."""
+    if books.current and books.current["source"] == show["feed_url"]:
+        return books.current["step"]
+    return "waiting to find its chapters" if books.needs_placing(show["feed_url"]) else None
 
 
 def overview() -> dict:
@@ -300,12 +308,16 @@ def _podcast_show(feed_url: str) -> dict:
 def _book(source: str) -> dict:
     book = books.read(source)
     thumb = books.cover(source)
+    if book.get("placing"):  # the chapters will come from its epub: their names, but no lengths yet
+        chapters = [{"title": t, "duration": None} for t in book["contents"]]
+    else:
+        chapters = [{"title": c.title, "duration": round(c.duration)} for c in book["chapters"]]
     return {
         "kind": "book", "url": source, "title": book["title"], "author": book["author"], "parts": book["parts"],
-        "duration": round(sum(c.end - c.start for c in book["chapters"])),
+        "duration": book["duration"], "epub": book.get("epub"), "placing": bool(book.get("placing")),
         "thumb_url": f"/media/{thumb}" if thumb else None,
         "subscribed": _subscribed(source),
-        "chapters": [{"title": c.title, "duration": round(c.end - c.start)} for c in book["chapters"]],
+        "chapters": chapters,
     }
 
 

@@ -24,7 +24,7 @@ from pathlib import Path
 
 import yt_dlp
 
-from . import ads, db, downloader, push, sponsors, subscriptions, transcribe
+from . import ads, books, db, downloader, push, sponsors, subscriptions, transcribe
 from .config import (ACTIVE_HOURS, ADS_BACKEND, ADS_DIR, BLOCK_PAUSE_MINUTES, MAX_DOWNLOADS_PER_HOUR, MEDIA_DIR,
                      POLL_JITTER_MINUTES, POLL_MINUTES, SPONSOR_DELAY_HOURS, TIMEZONE)
 
@@ -218,6 +218,7 @@ class Worker:
         self._process_wake = threading.Event()
         self._cleaned_at = 0.0
         self._helper_checked_at = 0.0
+        self._placing_failed: dict[int, float] = {}  # book show id -> when to try placing its chapters again
 
     def start(self) -> None:
         _recover()
@@ -245,6 +246,7 @@ class Worker:
     def nudge(self) -> None:
         """Something was queued; don't wait for the idle timeout."""
         self._wake.set()
+        self._process_wake.set()  # (a book whose chapters are to be found)
 
     def refresh(self, show_id: int | None = None) -> None:
         """Check one show (or all) for new episodes as soon as possible."""
@@ -293,7 +295,29 @@ class Worker:
         if time.time() - self._helper_checked_at > 600:
             self._helper_checked_at = time.time()
             check_helper()
-        return sponsors.process_next()
+        return sponsors.process_next() or self._place_next_book()
+
+    def _place_next_book(self) -> bool:
+        """Find the chapters of a book that came with its epub (transcribing it
+        first: minutes), then queue them. Beside sponsor cutting, as both use Whisper."""
+        now = time.time()
+        with db.connect() as conn:
+            shows = [dict(r) for r in conn.execute("SELECT * FROM shows WHERE kind = 'book' AND enabled = 1")]
+        for show in shows:
+            if self._placing_failed.get(show["id"], 0) > now or not books.needs_placing(show["feed_url"]):
+                continue
+            try:
+                books.place_chapters(show["feed_url"])
+            except Exception as e:
+                log.exception("%s: couldn't find its chapters", show["name"])
+                self._placing_failed[show["id"]] = now + 3600
+                push.alert(f"bookchapters:{show['id']}", f"{show['name']}: couldn't find its chapters",
+                           push.short_error(e), f"/#/show/{show['id']}")
+                return True
+            push.resolve(f"bookchapters:{show['id']}")
+            self.refresh(show["id"])  # queues the chapters (and replaces any cut from the files' marks)
+            return True
+        return False
 
     def _process_loop(self) -> None:
         while not self._stop.is_set():

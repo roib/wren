@@ -55,6 +55,11 @@ It also helps with:
   the file's own chapter marks and are cut out without re-encoding. The feed is
   serial, so Podcasts lists the book from its first chapter, and every chapter
   is kept. Once a book is added, its original files can be deleted.
+  Put the book's DRM-free `.epub` beside the audio, and the chapters come from
+  the book itself: Wren transcribes the audio with Whisper and finds where each
+  chapter's opening words are spoken. That works where the files' own marks are
+  useless ("Part 01" every hour or so), and for dramatized books that never read
+  a chapter title aloud. Transcribing takes about a fortieth of the book's length.
 - **Downloads in podcast-friendly formats.** Audio is AAC (`.m4a`), kept as
   YouTube serves it. Video is H.264/AAC MP4, up to 720p by default.
 - **Publishes podcast feeds.** Each show has a feed at `/feeds/<show>.xml`.

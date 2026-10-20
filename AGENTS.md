@@ -26,6 +26,7 @@ three-pane desktop layout.
 | `wren/ads.py` | Ad reads in a transcript via Claude (API `messages.parse`, or the host helper's request/answer files), boundaries snapped to pauses, plausibility checks |
 | `host/` | `wren-claude-helper` + systemd user units: answers Wren's requests with `claude -p` (tools off) on the host, with the owner's login |
 | `wren/books.py` | Audiobooks from the books folder (`WREN_BOOKS`): chapters from the files' chapter marks, cut out losslessly; source/feed URL `book:<path>`, ids `book` + hash |
+| `wren/epub.py` | A book's epub (table of contents, each chapter's words) and placing its chapters in Whisper transcripts by their opening words |
 | `wren/downloader.py` | One download with yt-dlp; `Skipped`, `Unavailable`, `RateLimited` exceptions |
 | `wren/podcast.py` | RSS rendering, feed slugs, the empty-feed placeholder |
 | `wren/artwork.py` | Square show artwork from the channel picture, with the Wren badge (`wren-badge.png`) |
@@ -118,6 +119,21 @@ three-pane desktop layout.
   `shows` table once (`db._allow_books`), because SQLite can't change a CHECK
   constraint. Foreign keys stay off during the copy, or feed items would be
   cascade-deleted.
+- **Chapters from an epub.** An `.epub` beside a book's audio replaces the
+  files' chapter marks. The worker's processing thread transcribes the audio
+  (transcripts cached like episodes'). It finds each table-of-contents entry's
+  first 80 words as three-word runs, in book order, in the current file or a
+  later one, and saves the result in `$WREN_DATA/chapters/`, keyed on the files'
+  names and sizes. Then it re-reads the show, which replaces chapters cut before
+  from files that still exist. Short entries (a part's title page) begin the
+  chapter after them. Chapters that weren't found join the one before. Audio
+  before the first chapter (credits) joins the first, and a chapter crossing
+  files is concatenated losslessly. If fewer than half the chapters are found,
+  the marks stay. Tested on a full-cast dramatization: every chapter in the
+  first file placed, each cut right before its first words. Asking Claude to
+  place chapters from the plot alone got only about half right; don't go back
+  to that. A chapter's item id hashes all its pieces, start *and* end, so a
+  re-cut chapter that starts at the same place is still a new episode.
 - **Apple Podcasts** won't follow an empty feed (hence the placeholder item),
   caches artwork (artwork URLs carry `?v=<mtime>`), and opens `podcast://` links
   with "Follow a Show by URL" filled in.
