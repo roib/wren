@@ -17,11 +17,11 @@ def _ago(ts: int | None) -> str:
 
 
 def _ads_check(parser, video_id: str) -> None:
-    """Transcribe an episode and ask Claude for its ad reads, compared with
-    SponsorBlock's marks: a dry run to see how well it works on a show."""
+    """Transcribe an episode and ask Claude for its ad reads (compared with
+    SponsorBlock's marks) and its chapters: a dry run to see how well it works on a show."""
     import time
 
-    from . import ads, db, notes, sponsors, transcribe
+    from . import ads, chapters, db, notes, sponsors, transcribe
     from .config import MEDIA_DIR
 
     if not transcribe.available():
@@ -35,21 +35,36 @@ def _ads_check(parser, video_id: str) -> None:
     ep = dict(row)
     clock = lambda t: f"{int(t) // 60}:{int(t) % 60:02d}"  # noqa: E731
     print(f"{ep['title']} ({clock(ep['duration'] or 0)})")
-    if ep["sponsor_state"] == "done" and ep["sponsor_removed"]:
-        print("note: this copy has already been cut, so times are in the cut file")
-    transcript = transcribe.transcribe(MEDIA_DIR / ep["file"])
-    rate = (ep["duration"] or 0) / transcript["seconds"] if transcript["seconds"] else 0
-    print(f"transcribed in {transcript['seconds']:.0f}s ({rate:.0f}x real time)")
+    transcript = transcribe.load(video_id)
+    if transcript:
+        print("using the transcript saved when it was processed (times in the original)")
+    else:
+        if ep["sponsor_state"] == "done" and ep["sponsor_removed"]:
+            print("note: this copy has already been cut, so times are in the cut file")
+        transcript = transcribe.transcribe(MEDIA_DIR / ep["file"])
+        rate = (ep["duration"] or 0) / transcript["seconds"] if transcript["seconds"] else 0
+        print(f"transcribed in {transcript['seconds']:.0f}s ({rate:.0f}x real time)")
     t0 = time.time()
     print(f"asking Claude ({ads.backend()})")
-    while True:
+    ids = (video_id, chapters.request_id(video_id))
+    for rid in ids:
+        ads.forget(rid)  # an answer left from an earlier run
+    answer = chaptered = None
+    while answer is None or chaptered is None:  # both questions out at once
         try:
-            answer = ads.ask_claude(transcript, ep["title"], video_id, ep.get("description"))
-            break
+            answer = answer or ads.ask_claude(transcript, ep["title"], video_id, ep.get("description"))
         except ads.Pending:
+            pass
+        try:
+            chaptered = chaptered or chapters.ask(transcript, ep["title"], video_id)
+        except ads.Pending:
+            pass
+        if answer is None or chaptered is None:
             if time.time() - t0 > 15 * 60:
                 parser.exit(1, "wren: no answer from the helper on the host in 15 minutes\n")
             time.sleep(5)
+    for rid in ids:
+        ads.forget(rid)
     print(f"Claude answered in {time.time() - t0:.0f}s")
     cuts, note = ads.choose(answer.ads, transcript, ep["duration"])
     for a in answer.ads:
@@ -67,6 +82,13 @@ def _ads_check(parser, video_id: str) -> None:
         print("SponsorBlock: " + (", ".join(f"{clock(a)}-{clock(b)}" for a, b in marks) or "no marks"))
     except Exception as e:
         print(f"SponsorBlock: unreachable ({e})")
+    generated = chapters.place(chaptered, transcript)
+    creator = [] if sponsors._is_podcast(ep) else chapters.from_description(ep.get("description"), ep["duration"])
+    chosen, source = chapters.choose(creator, generated)
+    print(f"chapters: {len(chosen)}, {source or 'none'}"
+          f"{' (the creator listed some, but they were set aside)' if creator and source != 'creator' else ''}")
+    for c in chosen:  # on the original timeline, like the cuts above
+        print(f"  {clock(c['start']):>7}  {c['title']}")
 
 
 def main() -> None:

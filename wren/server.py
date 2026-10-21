@@ -1,3 +1,4 @@
+import json
 import logging
 import mimetypes
 import threading
@@ -7,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import admin, artwork, books, db, podcast, push, subscriptions, worker
+from . import admin, artwork, books, chapters, db, podcast, push, subscriptions, worker
 from .config import BASE_URL, MEDIA_DIR, WEB_DIR, WORKER_ENABLED
 
 # Slim container images lack /etc/mime.types; without these, media is served as
@@ -375,6 +376,15 @@ def singles_feed(request: Request):
     return _feed_response(podcast.render(
         "Wren: single episodes", "Episodes added to Wren one at a time.", eps, base, f"{base}{request.url.path}",
         art=artwork.feed_ref(artwork.singles_path())))
+
+
+@app.get("/chapters/{mode}/{video_id}.json")
+def episode_chapters(mode: str, video_id: str):
+    """An episode's chapters as a Podcasting 2.0 chapters file (linked from its feed item)."""
+    ep = next((e for e in db.list_episodes() if e["video_id"] == video_id and e["mode"] == mode), None)
+    if not ep or not (body := chapters.json_chapters(ep))["chapters"]:
+        raise HTTPException(404, "No chapters")
+    return Response(json.dumps(body), media_type="application/json+chapters")
 
 
 @app.get("/feeds/show/{show_id}.xml")

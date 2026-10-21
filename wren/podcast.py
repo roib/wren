@@ -2,10 +2,12 @@
 
 import re
 import subprocess
+import urllib.parse
 from datetime import datetime, timezone
 from email.utils import format_datetime
 from xml.sax.saxutils import escape
 
+from . import chapters
 from .config import MEDIA_DIR
 
 RESERVED = {"singles", "show"}
@@ -71,6 +73,10 @@ def _item(ep: dict, base: str) -> str:
         parts.append(f"<description>{escape(description)}</description>")
     if d := _duration(ep.get("duration")):
         parts.append(f"<itunes:duration>{d}</itunes:duration>")
+    if chapters.for_episode(ep):
+        # Also written into the file itself; this is for apps that read the feed's chapters instead.
+        url = f"{base}/chapters/{ep['mode']}/{urllib.parse.quote(ep['video_id'])}.json"
+        parts.append(f'<podcast:chapters url="{escape(url)}" type="application/json+chapters"/>')
     if ep.get("thumb"):
         parts.append(f'<itunes:image href="{escape(base + "/media/" + ep["thumb"])}"/>')
     if ep.get("channel"):
@@ -130,7 +136,7 @@ def render(title: str, description: str, episodes: list[dict], base: str, self_u
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" '
-        'xmlns:atom="http://www.w3.org/2005/Atom">'
+        'xmlns:atom="http://www.w3.org/2005/Atom" xmlns:podcast="https://podcastindex.org/namespace/1.0">'
         "<channel>" + "".join(head)
         + ("".join(_item(ep, base) for ep in episodes) if episodes else _placeholder_item(base))
         + "</channel></rss>\n"

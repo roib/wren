@@ -78,6 +78,7 @@ def test_held_back_until_the_delay_after_publishing(client, show, sponsorblock):
     detail = client.get(f"/api/shows/{show['id']}/detail").json()
     assert detail["entries"][0]["sponsors"] == {
         "state": "done", "removed": 75, "count": 2, "note": None, "description_removed": [],
+        "chapters": [], "chapters_source": None,
         "cuts": [{"start": 30, "end": 45, "source": "sponsorblock"}, {"start": 100, "end": 160, "source": "sponsorblock"}]}
 
     # Processed once: never looked at again.

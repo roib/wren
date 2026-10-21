@@ -6,7 +6,7 @@ import types
 import pytest
 from conftest import item
 
-from wren import ads, db, sponsors, subscriptions, transcribe
+from wren import ads, chapters, db, sponsors, subscriptions, transcribe
 from wren.config import MEDIA_DIR
 
 SHOW = "https://www.youtube.com/playlist?list=UUtest"
@@ -25,8 +25,9 @@ TRANSCRIPT = words((0, 99), (101, 159.5), (160.5, 300), (301, 600))
 @pytest.fixture
 def transcript_mode(monkeypatch):
     """Transcript mode on: SponsorBlock, Whisper and Claude are fakes the test controls."""
-    calls = {"lookup": [], "transcribe": [], "claude": [], "cut": []}
-    fake = types.SimpleNamespace(marks={}, answer=[], description_lines=[], transcript=TRANSCRIPT, calls=calls)
+    calls = {"lookup": [], "transcribe": [], "claude": [], "cut": [], "chapters": []}
+    fake = types.SimpleNamespace(marks={}, answer=[], description_lines=[], transcript=TRANSCRIPT, calls=calls,
+                                 chapters=chapters.Chapters(chapters=[]))
     monkeypatch.setattr(ads, "available", lambda: True)
     monkeypatch.setattr(transcribe, "available", lambda: True)
     monkeypatch.setattr(sponsors, "lookup", lambda vid: calls["lookup"].append(vid) or fake.marks.get(vid, []))
@@ -34,6 +35,9 @@ def transcript_mode(monkeypatch):
     monkeypatch.setattr(ads, "ask_claude", lambda t, title, vid, description=None: calls["claude"].append(title)
                         or ads.Ads(ads=fake.answer, description_lines=fake.description_lines))
     monkeypatch.setattr(sponsors, "cut", lambda path, segs: calls["cut"].append((path.name, segs)))
+    monkeypatch.setattr(chapters, "ask", lambda t, title, vid: fake.chapters() if callable(fake.chapters)
+                        else fake.chapters)
+    monkeypatch.setattr(chapters, "write", lambda path, chs, duration: calls["chapters"].append((path.name, chs)))
     sponsors._next_try.clear()
     return fake
 
@@ -195,6 +199,48 @@ def test_ad_lines_leave_the_description(held, transcript_mode):
     # The sponsor lines are gone, and chapter times after the 60s cut moved back.
     assert ep["description"] == "About bridges.\n\n01:00 Intro\n02:00 Bridges"
     assert json.loads(ep["sponsor_cuts"])["description_removed"] == ["SPONSORS:", "- Acme: code SHOW"]
+
+
+def test_chapters_are_made_with_the_cuts(held, transcript_mode):
+    from fastapi.testclient import TestClient
+
+    from wren import server
+    client = TestClient(server.app)
+    transcript_mode.answer = [ad(99.4, 159.6)]  # cut 100-160
+    transcript_mode.chapters = chapters.Chapters(chapters=[
+        chapters.Chapter(start=0, first_words="w0", title="Opening"),
+        chapters.Chapter(start=300, first_words="w3", title="Later on")])  # its first word is at 301
+    sponsors.process_next(now=episode()["added_at"])
+    # Written into the file on the cut audio's timeline: 300.5 less the 60s cut.
+    assert transcript_mode.calls["chapters"] == [("e1.m4a", [{"start": 0.0, "title": "Opening"},
+                                                             {"start": 240.5, "title": "Later on"}])]
+    decision = json.loads(episode()["sponsor_cuts"])
+    assert decision["chapters_source"] == "transcript" and decision["chapters"][1]["start"] == 300.5
+    # Linked from the feed, for apps that read chapters there.
+    feed = client.get("/feeds/test-show.xml").text
+    assert 'podcast:chapters url="http://testserver/chapters/audio/e1.json"' in feed
+    assert client.get("/chapters/audio/e1.json").json()["chapters"][1] == {"startTime": 240.5, "title": "Later on"}
+    assert client.get("/chapters/video/e1.json").status_code == 404
+
+
+def test_episode_waits_for_both_answers(held, transcript_mode):
+    def pending():
+        raise ads.Pending("e1-chapters")
+    transcript_mode.chapters = pending
+    added = episode()["added_at"]
+    assert sponsors.process_next(now=added)
+    assert episode()["sponsor_state"] == "pending"  # the ad reads are in, the chapters aren't
+    transcript_mode.chapters = chapters.Chapters(chapters=[chapters.Chapter(start=0, title="All of it")])
+    sponsors.process_next(now=added + sponsors.ANSWER_POLL_SECONDS)
+    assert episode()["sponsor_state"] == "done"
+
+
+def test_chapters_failing_doesnt_hold_the_episode(held, transcript_mode):
+    def fail():
+        raise ads.DetectError("no answer")
+    transcript_mode.chapters = fail
+    sponsors.process_next(now=episode()["added_at"])
+    assert episode()["sponsor_state"] == "done" and "chapters" not in json.loads(episode()["sponsor_cuts"])
 
 
 def test_claude_unreachable_retries_later(held, transcript_mode, monkeypatch):

@@ -684,6 +684,7 @@ function episodeRow(e, { withShow = false, when = fmtWhen } = {}) {
       h("div", { class: "collapse-body" },
         h("p", { class: "ep-when" }, ...downloadedLines(e, { withShow })),
         cutsTable(e),
+        chapterList(e),
         // Short labels: on phones these share one row, an icon over each label.
         h("div", { class: "ep-actions" },
           e.copies.map((c) => h("button", { class: "action", onclick: () => openPlayer(e, c) },
@@ -763,6 +764,29 @@ function cutsTable(e) {
     lines.length > 0 && h("div", { class: "cuts-desc" },
       h("div", { class: "cuts-desc-head" }, "From the description"),
       h("ul", {}, lines.map((l) => h("li", {}, l)))));
+}
+
+const chaptersShown = new Set(); // episodes whose chapter list is open
+
+// The chapters written into the episode, at their times in the cut audio.
+function chapterList(e) {
+  const sp = e.sponsors;
+  if (!sp?.chapters?.length) return null;
+  const shown = chaptersShown.has(e.video_id);
+  const from = sp.chapters_source === "creator" ? "the show's own" : "made from the transcript";
+  return h("div", { class: `cuts chapters${shown ? " shown" : ""}` },
+    h("button", {
+      class: "cuts-head", "aria-expanded": String(shown),
+      onclick: (ev) => {
+        const box = ev.currentTarget.closest(".cuts");
+        const now = !box.classList.contains("shown");
+        box.classList.toggle("shown", now);
+        ev.currentTarget.setAttribute("aria-expanded", String(now));
+        if (now) chaptersShown.add(e.video_id); else chaptersShown.delete(e.video_id);
+      },
+    }, `${plural(sp.chapters.length, "chapter")} · ${from}`, h("span", { class: "chev" }, icon("chevronDown"))),
+    h("table", {}, h("tbody", {}, sp.chapters.map((c) => h("tr", {},
+      h("td", { class: "num" }, clock(c.start)), h("td", {}, c.title))))));
 }
 
 // "2 sponsor reads and the intro", "1 sponsor read, 2 promos and the intro and outro", "the intro",

@@ -52,6 +52,9 @@ def test_ask_helper_writes_a_request_then_reads_the_answer():
         {"ok": True, "result": {"ads": [{"start": 0, "end": 5, "advertiser": "Acme", "confidence": "high"}]}}))
     assert ads.ask_claude(TRANSCRIPT, "Show #1", "abc_123-XY").ads == [ads.Ad(start=0, end=5, advertiser="Acme",
                                                                        confidence="high")]
+    # Kept (the episode may still be waiting on another question) until it's done with.
+    assert ads.ask_claude(TRANSCRIPT, "Show #1", "abc_123-XY").ads[0].advertiser == "Acme"
+    ads.forget("abc_123-XY")
     assert not any((ADS_DIR / "requests").iterdir()) and not any((ADS_DIR / "answers").iterdir())
 
 

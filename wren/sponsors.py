@@ -27,7 +27,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from . import ads, db, notes, transcribe
+from . import ads, chapters, db, notes, transcribe
 from .config import MEDIA_DIR, SPONSOR_DELAY_HOURS
 
 log = logging.getLogger("wren")
@@ -189,13 +189,31 @@ def decide(ep: dict) -> dict:
         transcribe.save(ep["video_id"], transcript)
         log.info("Transcribed %s in %ss", ep["title"], transcript["seconds"])
     _step(ep, "waiting for Claude" if ads.backend() == "claude-cli" else "finding ad reads")
-    answer = ads.ask_claude(transcript, ep["title"], ep["video_id"], ep.get("description"))
+    # Both questions go out together; whichever isn't answered yet is waited for.
+    pending, answer, chaptered = None, None, None
+    try:
+        answer = ads.ask_claude(transcript, ep["title"], ep["video_id"], ep.get("description"))
+    except ads.Pending as e:
+        pending = e
+    try:
+        chaptered = chapters.ask(transcript, ep["title"], ep["video_id"])
+    except ads.Pending as e:
+        pending = e
+    except Exception as e:
+        log.warning("%s: no chapters: %s", ep["title"], e)  # the episode goes out without them
+    if pending:
+        raise pending
     found, note = ads.choose(answer.ads, transcript, ep.get("duration"))
     if note:
         log.warning("%s: %s", ep["title"], note)
     decision = {"cuts": sorted(combine(marks, found) + extras, key=lambda c: c["start"]), "note": note}
     if answer.description_lines:
         decision["description_lines"] = sorted(set(answer.description_lines))
+    # A podcast's show-note times are off by the ads its host inserted: only YouTube's are tried.
+    creator = [] if _is_podcast(ep) else chapters.from_description(ep.get("description"), ep.get("duration"))
+    chosen, source = chapters.choose(creator, chapters.place(chaptered, transcript) if chaptered else [])
+    if chosen:
+        decision["chapters"], decision["chapters_source"] = chosen, source  # on the original timeline
     return decision
 
 
@@ -233,6 +251,12 @@ def _description(ep: dict, decision: dict, segments: list[tuple[float, float]]) 
     return description
 
 
+def _forget(ep: dict) -> None:
+    """The episode is done with: its questions to Claude go."""
+    ads.forget(ep["video_id"])
+    ads.forget(chapters.request_id(ep["video_id"]))
+
+
 def process(ep: dict) -> None:
     """Decide and make the cuts in one held-back episode, then let it into the feeds."""
     if not (MEDIA_DIR / ep["file"]).exists():
@@ -243,6 +267,10 @@ def process(ep: dict) -> None:
         _step(ep, "cutting")
         cut(MEDIA_DIR / ep["file"], segments)
     removed = round(sum(end - start for start, end in segments))
+    if decision.get("chapters"):
+        _step(ep, "adding chapters")
+        marks = chapters.after_cuts(decision["chapters"], segments)
+        chapters.write(MEDIA_DIR / ep["file"], marks, (ep.get("duration") or marks[-1]["start"] + 60) - removed)
     description = _description(ep, decision, segments)
     with db.connect() as conn:
         conn.execute(
@@ -252,6 +280,7 @@ def process(ep: dict) -> None:
                WHERE video_id = ? AND mode = ?""",
             (removed, json.dumps([[round(a, 1), round(b, 1)] for a, b in segments]), json.dumps(decision), removed,
              description, ep["video_id"], ep["mode"]))
+    _forget(ep)
     sources = sorted({c["source"] for c in decision["cuts"]})
     if segments:
         log.info("Removed %d sponsor read(s), %ds, from %s (%s; %s)", len(segments), removed, ep["title"], ep["mode"],
@@ -289,6 +318,7 @@ def _process_next(now: float) -> bool:
             log.warning("Publishing %s uncut: no answer from Claude on the server", ep["title"])
             with db.connect() as conn:
                 conn.execute("UPDATE episodes SET sponsor_state = 'done' WHERE video_id = ? AND mode = ?", key)
+            _forget(ep)
         except Exception as e:
             if now < ready_at(ep) + GIVE_UP_SECONDS:
                 _next_try[key] = now + RETRY_SECONDS
@@ -298,6 +328,7 @@ def _process_next(now: float) -> bool:
             log.warning("Publishing %s uncut: %s", ep["title"], e)
             with db.connect() as conn:
                 conn.execute("UPDATE episodes SET sponsor_state = 'done' WHERE video_id = ? AND mode = ?", key)
+            _forget(ep)
         _next_try.pop(key, None)
         return True
     return False

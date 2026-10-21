@@ -9,7 +9,7 @@ import urllib.parse
 
 import yt_dlp
 
-from . import artwork, books, db, feeds, podcast, podcasts, sponsors, subscriptions, ytdl
+from . import artwork, books, chapters, db, feeds, podcast, podcasts, sponsors, subscriptions, ytdl
 from .config import MEDIA_DIR
 
 
@@ -141,7 +141,8 @@ def _entries_from_episodes(rows: list[dict]) -> list[dict]:
             e["sponsors"] = {"state": "done", "removed": r["sponsor_removed"] or 0,
                              "count": len(json.loads(r["sponsor_segments"] or "[]")),
                              "cuts": decision.get("cuts", []), "note": decision.get("note"),
-                             "description_removed": decision.get("description_removed", [])}
+                             "description_removed": decision.get("description_removed", []),
+                             "chapters": chapters.for_episode(dict(r)), "chapters_source": decision.get("chapters_source")}
     for e in by_id.values():
         e["copies"].sort(key=lambda c: c["mode"])  # audio before video
     return sorted(by_id.values(), key=lambda e: (e["upload_date"] or "", e["added_at"]), reverse=True)

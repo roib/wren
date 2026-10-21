@@ -177,10 +177,22 @@ def _prompt(transcript: dict, title: str, description: str | None) -> str:
 def ask_claude(transcript: dict, title: str, video_id: str, description: str | None = None) -> Ads:
     """Claude's answer: the ad reads, and the description's ad lines. Raises
     Pending while the host helper is on it."""
-    prompt = _prompt(transcript, title, description)
+    return ask(video_id, RULES, SCHEMA, Ads, _prompt(transcript, title, description))
+
+
+def ask(request_id: str, system: str, schema: dict, output: type[BaseModel], prompt: str):
+    """One question to Claude, answered as `output`. Through the host helper the
+    answer is kept until forget(request_id), so an episode waiting on a second
+    question doesn't ask the first one again."""
     if backend() == "claude-cli":
-        return _ask_helper(prompt, video_id)
-    return _ask_api(prompt)
+        return _ask_helper(request_id, system, schema, output, prompt)
+    return _ask_api(system, output, prompt)
+
+
+def forget(request_id: str) -> None:
+    """Done with a question: its request and answer files go."""
+    (ADS_DIR / "answers" / f"{request_id}.json").unlink(missing_ok=True)
+    (ADS_DIR / "requests" / f"{request_id}.json").unlink(missing_ok=True)
 
 
 def _write(path, data: dict) -> None:
@@ -190,32 +202,30 @@ def _write(path, data: dict) -> None:
     tmp.replace(path)  # never a half-written file for the other side
 
 
-def _ask_helper(prompt: str, video_id: str) -> Ads:
-    answer_path = ADS_DIR / "answers" / f"{video_id}.json"
-    request_path = ADS_DIR / "requests" / f"{video_id}.json"
+def _ask_helper(request_id: str, system: str, schema: dict, output: type[BaseModel], prompt: str):
+    answer_path = ADS_DIR / "answers" / f"{request_id}.json"
+    request_path = ADS_DIR / "requests" / f"{request_id}.json"
     if answer_path.exists():
         answer = json.loads(answer_path.read_text())
-        answer_path.unlink(missing_ok=True)
-        request_path.unlink(missing_ok=True)
         if not answer.get("ok"):
+            forget(request_id)  # asked again on the retry
             raise DetectError(f"helper: {answer.get('error') or 'failed'}")
-        return Ads.model_validate(answer["result"])
+        return output.model_validate(answer["result"])
     if not request_path.exists():
-        _write(request_path, {"id": video_id, "model": ADS_MODEL, "system": RULES, "schema": SCHEMA,
-                              "prompt": prompt,
-                              "created_at": int(time.time())})
-    raise Pending(video_id)
+        _write(request_path, {"id": request_id, "model": ADS_MODEL, "system": system, "schema": schema,
+                              "prompt": prompt, "created_at": int(time.time())})
+    raise Pending(request_id)
 
 
-def _ask_api(prompt: str) -> Ads:
+def _ask_api(system: str, output: type[BaseModel], prompt: str):
     import anthropic
     client = anthropic.Anthropic()
     response = client.messages.parse(
         model=ADS_MODEL,
         max_tokens=16000,
-        system=RULES,
+        system=system,
         messages=[{"role": "user", "content": prompt}],
-        output_format=Ads,
+        output_format=output,
     )
     if response.stop_reason != "end_turn" or response.parsed_output is None:
         raise DetectError(f"no answer ({response.stop_reason}, request {response._request_id})")

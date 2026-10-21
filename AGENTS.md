@@ -23,6 +23,7 @@ three-pane desktop layout.
 | `wren/feeds.py` | Show listings via yt-dlp flat playlist extraction (channels → their `UU…` uploads playlist) |
 | `wren/sponsors.py` | Sponsor reads: SponsorBlock lookup (hash prefix), lossless ffmpeg cut, the once-only processing of held-back episodes |
 | `wren/transcribe.py` | Whisper (faster-whisper) transcripts with word times; optional, in the container; transcripts kept 14 days |
+| `wren/chapters.py` | Chapters for episodes with ad removal: Claude's from the transcript, or the creator's when they check out; moved past the cuts, written into the file |
 | `wren/notes.py` | Episode descriptions: ad lines removed (marked by Claude with the ad reads), chapter times moved to match the cut audio |
 | `wren/ads.py` | Ad reads in a transcript via Claude (API `messages.parse`, or the host helper's request/answer files), boundaries snapped to pauses, plausibility checks |
 | `host/` | `wren-claude-helper` + systemd user units: answers Wren's requests with `claude -p` (tools off) on the host, with the owner's login |
@@ -100,6 +101,16 @@ three-pane desktop layout.
   dropped whole, never rewritten, and YouTube chapter times are moved back by
   the cuts before them (podcast show-note times are left alone: inserted ads
   already shift them).
+- **Chapters** come with ad removal (same once-only step, a second request to
+  Claude sent alongside the ad one; answers are kept until the episode is
+  done, `ads.forget`). Tested on five episodes: Claude matched creators'
+  chapter starts within seconds. A creator's list is used only if it starts at
+  0, is in order, ends inside the episode and mostly agrees with Claude's: one
+  show's description carried another episode's chapters. Asked for a chapter
+  every ~5 minutes, a 2½-hour episode got 33 with near-duplicates, hence 8–15
+  minutes and merging. Chapters live on the original timeline in the decision
+  and are moved past the cuts when written (`after_cuts`). If the chapters
+  request fails, the episode goes out without them; it never waits on them.
 - **The host helper** (`host/`) shares files with Wren through the data folder
   (`/data/ads/`), never SSH or a login in the container. `claude -p` runs with
   `--tools ""` from an empty directory and `--json-schema` (the reply is in
