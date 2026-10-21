@@ -751,17 +751,20 @@ function cutsTable(e) {
       h("tbody", {}, sp.cuts.map((c) => h("tr", {},
         h("td", { class: "num" }, `${clock(c.start)}–${clock(c.end)}`),
         h("td", { class: "num" }, length(c.end - c.start)),
-        h("td", {}, c.category ? (c.category === "intro" ? "Intro" : "Outro") : c.advertiser || "—"),
+        h("td", {}, c.category ? (c.category === "intro" ? "Intro" : "Outro")
+          : c.kind === "promo" ? `Promo · ${c.advertiser || "—"}` : c.advertiser || "—"),
         h("td", { class: "src" }, c.source === "transcript" ? "Transcript" : "SponsorBlock"))))),
     h("div", { class: "cuts-note" }, "Times are in the original video."));
 }
 
-// "2 sponsor reads and the intro", "1 sponsor read and the intro and outro", "the intro".
+// "2 sponsor reads and the intro", "1 sponsor read, 2 promos and the intro and outro", "the intro".
 function cutsSummary(cuts) {
-  const reads = cuts.filter((c) => !c.category).length;
+  const reads = cuts.filter((c) => !c.category && c.kind !== "promo").length;
+  const promos = cuts.filter((c) => !c.category && c.kind === "promo").length;
   const extras = ["intro", "outro"].filter((k) => cuts.some((c) => c.category === k));
-  const parts = [reads ? plural(reads, "sponsor read") : null, extras.length ? `the ${extras.join(" and ")}` : null];
-  return parts.filter(Boolean).join(" and ");
+  const parts = [reads ? plural(reads, "sponsor read") : null, promos ? plural(promos, "promo") : null,
+    extras.length ? `the ${extras.join(" and ")}` : null].filter(Boolean);
+  return parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts.join("");
 }
 
 // A length of time that can't be mistaken for a clock time: "44s", "1m 21s", "1h 02m".

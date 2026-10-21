@@ -76,6 +76,14 @@ def test_snap_stays_near_the_speech_in_a_long_pause():
     assert ads.snap_end(10.0, pauses) == 11.5
 
 
+def test_choose_marks_promos():
+    promo = ads.Ad(start=99.4, end=159.6, advertiser="The Daily Thing", kind="promo", confidence="high")
+    cuts, _ = ads.choose([promo, ad(300, 310)], TRANSCRIPT, 600)
+    assert [c.get("kind") for c in cuts] == ["promo", None]  # no kind: a sponsor read
+    assert cuts[0]["advertiser"] == "The Daily Thing"
+    assert "kind" in ads.SCHEMA["properties"]["ads"]["items"]["required"]
+
+
 def test_choose_keeps_only_confident_and_plausible_cuts():
     cuts, note = ads.choose([ad(99.4, 159.6, advertiser="Acme"), ad(400, 410, "low", "Joke")], TRANSCRIPT, 600)
     assert note is None

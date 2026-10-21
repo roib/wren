@@ -208,9 +208,11 @@ def test_sponsor_cuts_table(phone, show):
     from wren import db
     cuts = [{"start": 2, "end": 11, "source": "sponsorblock", "category": "intro"},
             {"start": 781, "end": 862, "source": "sponsorblock"},
-            {"start": 2259, "end": 2315, "source": "transcript", "advertiser": "Hims", "confidence": "high"}]
+            {"start": 2259, "end": 2315, "source": "transcript", "advertiser": "Hims", "confidence": "high"},
+            {"start": 3000, "end": 3010, "source": "transcript", "advertiser": "Other Show", "kind": "promo",
+             "confidence": "high"}]
     with db.connect() as conn:
-        conn.execute("UPDATE episodes SET sponsor_state = 'done', sponsor_removed = 146, sponsor_segments = ?, "
+        conn.execute("UPDATE episodes SET sponsor_state = 'done', sponsor_removed = 156, sponsor_segments = ?, "
                      "sponsor_cuts = ? WHERE video_id = 'e1'",
                      (json.dumps([[c["start"], c["end"]] for c in cuts]), json.dumps({"cuts": cuts, "note": None})))
     phone.goto(f"/#/show/{show['id']}")
@@ -219,10 +221,11 @@ def test_sponsor_cuts_table(phone, show):
     phone.locator(".ep-head", has_text="Episode e1").tap()
     table = phone.locator(".ep.open .cuts")
     playwright.expect(table.locator("table")).to_be_hidden()  # folded on phones, behind its headline
-    playwright.expect(table.locator(".cuts-head")).to_have_text("Removed 2 sponsor reads and the intro · 2m 26s in all")
+    playwright.expect(table.locator(".cuts-head")).to_have_text("Removed 2 sponsor reads, 1 promo and the intro · 2m 36s in all")
     table.locator(".cuts-head").tap()
     playwright.expect(table.locator("table")).to_be_visible()
-    playwright.expect(table.locator("tbody tr")).to_have_count(3)
+    playwright.expect(table.locator("tbody tr")).to_have_count(4)
     playwright.expect(table.locator("tbody tr").first).to_have_text("0:02–0:119sIntroSponsorBlock")
     playwright.expect(table.locator("tbody tr").nth(1)).to_have_text("13:01–14:221m 21s—SponsorBlock")
-    playwright.expect(table.locator("tbody tr").last).to_contain_text("Hims")
+    playwright.expect(table.locator("tbody tr").nth(2)).to_contain_text("Hims")
+    playwright.expect(table.locator("tbody tr").last).to_have_text("50:00–50:1010sPromo · Other ShowTranscript")

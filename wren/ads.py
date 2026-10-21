@@ -45,7 +45,9 @@ naturally as part of the conversation without being a pitch.
 For each ad give "start" = the start time of its first line and "end" = the end time of its last line,
 in seconds, so that cutting [start, end] removes the whole ad and nothing else. Include the lead-in
 ("let's take a quick break, this episode is brought to you by...") and the hand-back if they're part of
-the ad. Give the advertiser, and your confidence that it is a paid ad: "high", "medium" or "low".
+the ad. Give the advertiser; the kind: "sponsor" for a paid read for a third party, "promo" for a
+promotion of another show or of the publisher's, network's or platform's own products; and your
+confidence that it is an ad: "high", "medium" or "low".
 If there are no ads, return an empty list."""
 
 
@@ -53,6 +55,7 @@ class Ad(BaseModel):
     start: float
     end: float
     advertiser: str
+    kind: Literal["sponsor", "promo"] = "sponsor"  # answers from before promos were told apart have none
     confidence: Literal["high", "medium", "low"]
 
 
@@ -72,8 +75,9 @@ class Pending(Exception):
 SCHEMA = {
     "type": "object", "additionalProperties": False, "required": ["ads"],
     "properties": {"ads": {"type": "array", "items": {
-        "type": "object", "additionalProperties": False, "required": ["start", "end", "advertiser", "confidence"],
+        "type": "object", "additionalProperties": False, "required": ["start", "end", "advertiser", "kind", "confidence"],
         "properties": {"start": {"type": "number"}, "end": {"type": "number"}, "advertiser": {"type": "string"},
+                       "kind": {"type": "string", "enum": ["sponsor", "promo"]},
                        "confidence": {"type": "string", "enum": ["high", "medium", "low"]}}}}},
 }
 
@@ -221,8 +225,10 @@ def snap_end(t: float, pauses: list[tuple[float, float]]) -> float:
 def choose(ads: list[Ad], transcript: dict, duration: float | None) -> tuple[list[dict], str | None]:
     """The cuts to make from Claude's answer, and why none are made if it looks wrong."""
     pauses = _pauses(transcript)
+    # A promo is marked as one; a cut without a kind is a sponsor read (as all were before).
     cuts = [{"start": snap_start(a.start, pauses), "end": snap_end(a.end, pauses), "source": "transcript",
-             "advertiser": a.advertiser, "confidence": a.confidence}
+             "advertiser": a.advertiser, **({"kind": "promo"} if a.kind == "promo" else {}),
+             "confidence": a.confidence}
             for a in ads if a.confidence == "high" and a.end > a.start]
     longest = max((c["end"] - c["start"] for c in cuts), default=0)
     if longest > MAX_AD_SECONDS:

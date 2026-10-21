@@ -54,7 +54,7 @@ def _ads_check(parser, video_id: str) -> None:
     cuts, note = ads.choose(found, transcript, ep["duration"])
     for a in found:
         kept = any(c["advertiser"] == a.advertiser and abs(c["start"] - a.start) < ads.SNAP_WINDOW + 1 for c in cuts)
-        print(f"  {clock(a.start)}-{clock(a.end)}  {a.advertiser}  [{a.confidence}]{'  -> cut' if kept else ''}")
+        print(f"  {clock(a.start)}-{clock(a.end)}  {a.advertiser}  [{a.kind}, {a.confidence}]{'  -> cut' if kept else ''}")
     if note:
         print(note)
     try:
