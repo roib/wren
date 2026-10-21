@@ -729,11 +729,16 @@ function sponsorLine(sp) {
 
 const cutsShown = new Set(); // episodes whose cuts table is open (phones fold it away)
 
-// What was cut: where (in the original video), how long, the advertiser and how it was found.
+// What was cut: where (in the original video), how long, the advertiser and how it was found;
+// and the lines taken out of the description.
 function cutsTable(e) {
   const sp = e.sponsors;
-  if (sp?.state !== "done" || !sp.removed || !sp.cuts?.length) return null;
+  const lines = sp?.description_removed || [];
+  const audio = Boolean(sp?.removed && sp.cuts?.length);
+  if (sp?.state !== "done" || (!audio && !lines.length)) return null;
   const shown = cutsShown.has(e.video_id);
+  const head = audio ? `Removed ${cutsSummary(sp.cuts, lines.length)} · ${length(sp.removed)} in all`
+    : `Removed ${plural(lines.length, "line")} from the description`;
   return h("div", { class: `cuts${shown ? " shown" : ""}` },
     h("button", {
       class: "cuts-head", "aria-expanded": String(shown),
@@ -744,8 +749,8 @@ function cutsTable(e) {
         ev.currentTarget.setAttribute("aria-expanded", String(now));
         if (now) cutsShown.add(e.video_id); else cutsShown.delete(e.video_id);
       },
-    }, `Removed ${cutsSummary(sp.cuts)} · ${length(sp.removed)} in all`, h("span", { class: "chev" }, icon("chevronDown"))),
-    h("table", {},
+    }, head, h("span", { class: "chev" }, icon("chevronDown"))),
+    audio && h("table", {},
       h("thead", {}, h("tr", {},
         h("th", {}, "Where"), h("th", {}, "Length"), h("th", {}, "Ad"), h("th", {}, "Source"))),
       h("tbody", {}, sp.cuts.map((c) => h("tr", {},
@@ -754,16 +759,21 @@ function cutsTable(e) {
         h("td", {}, c.category ? (c.category === "intro" ? "Intro" : "Outro")
           : c.kind === "promo" ? `Promo · ${c.advertiser || "—"}` : c.advertiser || "—"),
         h("td", { class: "src" }, c.source === "transcript" ? "Transcript" : "SponsorBlock"))))),
-    h("div", { class: "cuts-note" }, "Times are in the original video."));
+    audio && h("div", { class: "cuts-note" }, "Times are in the original video."),
+    lines.length > 0 && h("div", { class: "cuts-desc" },
+      h("div", { class: "cuts-desc-head" }, "From the description"),
+      h("ul", {}, lines.map((l) => h("li", {}, l)))));
 }
 
-// "2 sponsor reads and the intro", "1 sponsor read, 2 promos and the intro and outro", "the intro".
-function cutsSummary(cuts) {
+// "2 sponsor reads and the intro", "1 sponsor read, 2 promos and the intro and outro", "the intro",
+// "1 promo and 3 description lines".
+function cutsSummary(cuts, descriptionLines = 0) {
   const reads = cuts.filter((c) => !c.category && c.kind !== "promo").length;
   const promos = cuts.filter((c) => !c.category && c.kind === "promo").length;
   const extras = ["intro", "outro"].filter((k) => cuts.some((c) => c.category === k));
   const parts = [reads ? plural(reads, "sponsor read") : null, promos ? plural(promos, "promo") : null,
-    extras.length ? `the ${extras.join(" and ")}` : null].filter(Boolean);
+    extras.length ? `the ${extras.join(" and ")}` : null,
+    descriptionLines ? plural(descriptionLines, "description line") : null].filter(Boolean);
   return parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts.join("");
 }
 

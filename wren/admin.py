@@ -140,7 +140,8 @@ def _entries_from_episodes(rows: list[dict]) -> list[dict]:
             decision = json.loads(r["sponsor_cuts"] or "null") or {}
             e["sponsors"] = {"state": "done", "removed": r["sponsor_removed"] or 0,
                              "count": len(json.loads(r["sponsor_segments"] or "[]")),
-                             "cuts": decision.get("cuts", []), "note": decision.get("note")}
+                             "cuts": decision.get("cuts", []), "note": decision.get("note"),
+                             "description_removed": decision.get("description_removed", [])}
     for e in by_id.values():
         e["copies"].sort(key=lambda c: c["mode"])  # audio before video
     return sorted(by_id.values(), key=lambda e: (e["upload_date"] or "", e["added_at"]), reverse=True)

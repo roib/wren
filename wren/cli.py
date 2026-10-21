@@ -21,7 +21,7 @@ def _ads_check(parser, video_id: str) -> None:
     SponsorBlock's marks: a dry run to see how well it works on a show."""
     import time
 
-    from . import ads, db, sponsors, transcribe
+    from . import ads, db, notes, sponsors, transcribe
     from .config import MEDIA_DIR
 
     if not transcribe.available():
@@ -44,19 +44,24 @@ def _ads_check(parser, video_id: str) -> None:
     print(f"asking Claude ({ads.backend()})")
     while True:
         try:
-            found = ads.ask_claude(transcript, ep["title"], video_id)
+            answer = ads.ask_claude(transcript, ep["title"], video_id, ep.get("description"))
             break
         except ads.Pending:
             if time.time() - t0 > 15 * 60:
                 parser.exit(1, "wren: no answer from the helper on the host in 15 minutes\n")
             time.sleep(5)
     print(f"Claude answered in {time.time() - t0:.0f}s")
-    cuts, note = ads.choose(found, transcript, ep["duration"])
-    for a in found:
-        kept = any(c["advertiser"] == a.advertiser and abs(c["start"] - a.start) < ads.SNAP_WINDOW + 1 for c in cuts)
-        print(f"  {clock(a.start)}-{clock(a.end)}  {a.advertiser}  [{a.kind}, {a.confidence}]{'  -> cut' if kept else ''}")
+    cuts, note = ads.choose(answer.ads, transcript, ep["duration"])
+    for a in answer.ads:
+        print(f"  {clock(a.start)}-{clock(a.end)}  {a.advertiser}  [{a.kind}, {a.confidence}]"
+              f"  \"{a.first_words}\" ... \"{a.last_words}\"")
+    print("would cut: " + (", ".join(f"{c['start']:.1f}-{c['end']:.1f}" for c in cuts) or "nothing"))
     if note:
         print(note)
+    lines = notes.lines(ep.get("description"))
+    for n in answer.description_lines:
+        if 0 < n <= len(lines):
+            print(f"  description line {n}: {lines[n - 1][:100]}")
     try:
         marks = sponsors.merge(sponsors.lookup(video_id), ep["duration"])
         print("SponsorBlock: " + (", ".join(f"{clock(a)}-{clock(b)}" for a, b in marks) or "no marks"))

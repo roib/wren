@@ -26,12 +26,13 @@ TRANSCRIPT = words((0, 99), (101, 159.5), (160.5, 300), (301, 600))
 def transcript_mode(monkeypatch):
     """Transcript mode on: SponsorBlock, Whisper and Claude are fakes the test controls."""
     calls = {"lookup": [], "transcribe": [], "claude": [], "cut": []}
-    fake = types.SimpleNamespace(marks={}, answer=[], transcript=TRANSCRIPT, calls=calls)
+    fake = types.SimpleNamespace(marks={}, answer=[], description_lines=[], transcript=TRANSCRIPT, calls=calls)
     monkeypatch.setattr(ads, "available", lambda: True)
     monkeypatch.setattr(transcribe, "available", lambda: True)
     monkeypatch.setattr(sponsors, "lookup", lambda vid: calls["lookup"].append(vid) or fake.marks.get(vid, []))
     monkeypatch.setattr(transcribe, "transcribe", lambda path: calls["transcribe"].append(path.name) or fake.transcript)
-    monkeypatch.setattr(ads, "ask_claude", lambda t, title, vid: calls["claude"].append(title) or fake.answer)
+    monkeypatch.setattr(ads, "ask_claude", lambda t, title, vid, description=None: calls["claude"].append(title)
+                        or ads.Ads(ads=fake.answer, description_lines=fake.description_lines))
     monkeypatch.setattr(sponsors, "cut", lambda path, segs: calls["cut"].append((path.name, segs)))
     sponsors._next_try.clear()
     return fake
@@ -82,6 +83,22 @@ def test_choose_marks_promos():
     assert [c.get("kind") for c in cuts] == ["promo", None]  # no kind: a sponsor read
     assert cuts[0]["advertiser"] == "The Daily Thing"
     assert "kind" in ads.SCHEMA["properties"]["ads"]["items"]["required"]
+
+
+def test_cut_starts_at_the_ads_first_words_not_the_line():
+    # One transcript line ran the guest's answer into the ad: "...like yours? Absolutely. You're watching..."
+    said = "families like yours absolutely you're watching an interview subscribe now back to the interview so"
+    spoken = {"segments": [{"start": 0, "end": 20, "text": said, "words": [
+        [i * 1.0 + (1.5 if i >= 4 else 0), i * 1.0 + 0.8 + (1.5 if i >= 4 else 0), f" {w}"]
+        for i, w in enumerate(said.split())]}], "seconds": 1.0}
+    found = ads.Ad(start=0, end=16.3, advertiser="The Show", kind="promo", confidence="high",
+                   first_words="You're watching an interview", last_words="back to the interview")
+    cuts, _ = ads.choose([found], spoken, 600)
+    # The cut starts in the pause before "you're" (5.5s), not at the line's start, and ends after "interview".
+    assert 3.8 < cuts[0]["start"] < 5.5 and 15.3 <= cuts[0]["end"] < 16.5
+    # Words that can't be found leave the times as given.
+    lost = found.model_copy(update={"first_words": "nothing like this", "last_words": ""})
+    assert ads.refine(lost, ads._spoken(spoken)) == (0, 16.3)
 
 
 def test_choose_keeps_only_confident_and_plausible_cuts():
@@ -167,6 +184,19 @@ def test_implausible_answer_publishes_uncut_with_a_note(held, transcript_mode):
     assert transcript_mode.calls["cut"] == []
 
 
+def test_ad_lines_leave_the_description(held, transcript_mode):
+    with db.connect() as conn:
+        conn.execute("UPDATE episodes SET description = ? WHERE video_id = 'e1'",
+                     ("About bridges.\nSPONSORS:\n- Acme: code SHOW\n\n01:00 Intro\n03:00 Bridges",))
+    transcript_mode.answer = [ad(99.4, 159.6)]
+    transcript_mode.description_lines = [2, 3]
+    sponsors.process_next(now=episode()["added_at"])
+    ep = episode()
+    # The sponsor lines are gone, and chapter times after the 60s cut moved back.
+    assert ep["description"] == "About bridges.\n\n01:00 Intro\n02:00 Bridges"
+    assert json.loads(ep["sponsor_cuts"])["description_removed"] == ["SPONSORS:", "- Acme: code SHOW"]
+
+
 def test_claude_unreachable_retries_later(held, transcript_mode, monkeypatch):
     def fail(t, title, vid):
         raise ads.DetectError("no answer")
@@ -175,7 +205,7 @@ def test_claude_unreachable_retries_later(held, transcript_mode, monkeypatch):
     assert sponsors.process_next(now=added)
     assert episode()["sponsor_state"] == "pending"
     # The transcript was kept, so the retry doesn't transcribe again.
-    monkeypatch.setattr(ads, "ask_claude", lambda t, title, vid: [])
+    monkeypatch.setattr(ads, "ask_claude", lambda t, title, vid, description=None: ads.Ads(ads=[]))
     sponsors.process_next(now=added + sponsors.RETRY_SECONDS)
     assert episode()["sponsor_state"] == "done"
     assert transcript_mode.calls["transcribe"] == ["e1.m4a"]
@@ -203,7 +233,7 @@ def test_ask_claude_request(monkeypatch):
             return types.SimpleNamespace(stop_reason="end_turn", parsed_output=ads.Ads(ads=[ad(1, 2)]), _request_id="r")
     monkeypatch.setattr(anthropic, "Anthropic", lambda: types.SimpleNamespace(messages=Messages()))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
-    assert ads.ask_claude(words((0, 5)), "Show #1", "x") == [ad(1, 2)]
+    assert ads.ask_claude(words((0, 5)), "Show #1", "x").ads == [ad(1, 2)]
     assert sent["model"] == "claude-haiku-5-5" and sent["output_format"] is ads.Ads and sent["system"] == ads.RULES
     assert "[0.0-5.0] w0" in sent["messages"][0]["content"]
 

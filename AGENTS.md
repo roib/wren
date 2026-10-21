@@ -23,6 +23,7 @@ three-pane desktop layout.
 | `wren/feeds.py` | Show listings via yt-dlp flat playlist extraction (channels → their `UU…` uploads playlist) |
 | `wren/sponsors.py` | Sponsor reads: SponsorBlock lookup (hash prefix), lossless ffmpeg cut, the once-only processing of held-back episodes |
 | `wren/transcribe.py` | Whisper (faster-whisper) transcripts with word times; optional, in the container; transcripts kept 14 days |
+| `wren/notes.py` | Episode descriptions: ad lines removed (marked by Claude with the ad reads), chapter times moved to match the cut audio |
 | `wren/ads.py` | Ad reads in a transcript via Claude (API `messages.parse`, or the host helper's request/answer files), boundaries snapped to pauses, plausibility checks |
 | `host/` | `wren-claude-helper` + systemd user units: answers Wren's requests with `claude -p` (tools off) on the host, with the owner's login |
 | `wren/books.py` | Audiobooks from the books folder (`WREN_BOOKS`): chapters from the files' chapter marks, cut out losslessly; source/feed URL `book:<path>`, ids `book` + hash |
@@ -92,6 +93,13 @@ three-pane desktop layout.
   boundaries within seconds; the one wrong pick was "low" confidence, so only
   "high" is cut. Processing runs in its own thread (`wren-sponsors`), beside
   downloads. `wren ads-check <video_id>` is a dry run for a show.
+  Claude also gives each ad's first and last words: a transcript line can run
+  the conversation into an ad, and cutting from the line's start time would
+  have cut a guest's answer in a dry run, so cuts start at those words where they're found.
+  The same request marks the description's ad lines (`notes.py`); they're
+  dropped whole, never rewritten, and YouTube chapter times are moved back by
+  the cuts before them (podcast show-note times are left alone: inserted ads
+  already shift them).
 - **The host helper** (`host/`) shares files with Wren through the data folder
   (`/data/ads/`), never SSH or a login in the container. `claude -p` runs with
   `--tools ""` from an empty directory and `--json-schema` (the reply is in

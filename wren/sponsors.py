@@ -27,7 +27,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from . import ads, db, transcribe
+from . import ads, db, notes, transcribe
 from .config import MEDIA_DIR, SPONSOR_DELAY_HOURS
 
 log = logging.getLogger("wren")
@@ -189,10 +189,14 @@ def decide(ep: dict) -> dict:
         transcribe.save(ep["video_id"], transcript)
         log.info("Transcribed %s in %ss", ep["title"], transcript["seconds"])
     _step(ep, "waiting for Claude" if ads.backend() == "claude-cli" else "finding ad reads")
-    found, note = ads.choose(ads.ask_claude(transcript, ep["title"], ep["video_id"]), transcript, ep.get("duration"))
+    answer = ads.ask_claude(transcript, ep["title"], ep["video_id"], ep.get("description"))
+    found, note = ads.choose(answer.ads, transcript, ep.get("duration"))
     if note:
         log.warning("%s: %s", ep["title"], note)
-    return {"cuts": sorted(combine(marks, found) + extras, key=lambda c: c["start"]), "note": note}
+    decision = {"cuts": sorted(combine(marks, found) + extras, key=lambda c: c["start"]), "note": note}
+    if answer.description_lines:
+        decision["description_lines"] = sorted(set(answer.description_lines))
+    return decision
 
 
 def combine(marks: list[dict], found: list[dict]) -> list[dict]:
@@ -214,6 +218,21 @@ def combine(marks: list[dict], found: list[dict]) -> list[dict]:
     return sorted(out, key=lambda c: c["start"])
 
 
+def _description(ep: dict, decision: dict, segments: list[tuple[float, float]]) -> str | None:
+    """The episode's description without the lines Claude marked as ads (kept in
+    the decision, for the app), and for YouTube, whose chapter times are the
+    video's, those times moved to match the cut audio."""
+    description = ep.get("description")
+    if not description:
+        return description
+    if decision.get("description_lines"):
+        description, decision["description_removed"] = notes.remove(description, set(decision["description_lines"]))
+    if not _is_podcast(ep):
+        # A podcast's own times are already off by whatever ads its host inserted.
+        description = notes.retime(description, segments)
+    return description
+
+
 def process(ep: dict) -> None:
     """Decide and make the cuts in one held-back episode, then let it into the feeds."""
     if not (MEDIA_DIR / ep["file"]).exists():
@@ -224,13 +243,15 @@ def process(ep: dict) -> None:
         _step(ep, "cutting")
         cut(MEDIA_DIR / ep["file"], segments)
     removed = round(sum(end - start for start, end in segments))
+    description = _description(ep, decision, segments)
     with db.connect() as conn:
         conn.execute(
             """UPDATE episodes SET sponsor_state = 'done', sponsor_removed = ?, sponsor_segments = ?, sponsor_cuts = ?,
-                                   duration = CASE WHEN duration IS NULL THEN NULL ELSE MAX(0, duration - ?) END
+                                   duration = CASE WHEN duration IS NULL THEN NULL ELSE MAX(0, duration - ?) END,
+                                   description = ?
                WHERE video_id = ? AND mode = ?""",
             (removed, json.dumps([[round(a, 1), round(b, 1)] for a, b in segments]), json.dumps(decision), removed,
-             ep["video_id"], ep["mode"]))
+             description, ep["video_id"], ep["mode"]))
     sources = sorted({c["source"] for c in decision["cuts"]})
     if segments:
         log.info("Removed %d sponsor read(s), %ds, from %s (%s; %s)", len(segments), removed, ep["title"], ep["mode"],

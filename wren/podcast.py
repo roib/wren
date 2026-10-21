@@ -66,7 +66,7 @@ def _item(ep: dict, base: str) -> str:
     description = ep.get("description") or ""
     if ep.get("sponsor_removed"):
         m, s = divmod(ep["sponsor_removed"], 60)
-        description = f"Sponsor reads removed by Wren ({m}:{s:02d}), using SponsorBlock.\n\n{description}".strip()
+        description = f"Ads removed by Wren ({m}:{s:02d}).\n\n{description}".strip()
     if description:
         parts.append(f"<description>{escape(description)}</description>")
     if d := _duration(ep.get("duration")):

@@ -214,14 +214,15 @@ def test_sponsor_cuts_table(phone, show):
     with db.connect() as conn:
         conn.execute("UPDATE episodes SET sponsor_state = 'done', sponsor_removed = 156, sponsor_segments = ?, "
                      "sponsor_cuts = ? WHERE video_id = 'e1'",
-                     (json.dumps([[c["start"], c["end"]] for c in cuts]), json.dumps({"cuts": cuts, "note": None})))
+                     (json.dumps([[c["start"], c["end"]] for c in cuts]),
+                      json.dumps({"cuts": cuts, "note": None, "description_removed": ["SPONSORS:", "- Acme: code SHOW"]})))
     phone.goto(f"/#/show/{show['id']}")
     playwright.expect(phone.locator(".ep", has_text="Episode e1").locator(".badge.cut")).to_have_text("Ads removed")
     playwright.expect(phone.locator(".ep", has_text="Episode e2").locator(".badge.cut")).to_have_count(0)
     phone.locator(".ep-head", has_text="Episode e1").tap()
     table = phone.locator(".ep.open .cuts")
     playwright.expect(table.locator("table")).to_be_hidden()  # folded on phones, behind its headline
-    playwright.expect(table.locator(".cuts-head")).to_have_text("Removed 2 sponsor reads, 1 promo and the intro · 2m 36s in all")
+    playwright.expect(table.locator(".cuts-head")).to_have_text("Removed 2 sponsor reads, 1 promo, the intro and 2 description lines · 2m 36s in all")
     table.locator(".cuts-head").tap()
     playwright.expect(table.locator("table")).to_be_visible()
     playwright.expect(table.locator("tbody tr")).to_have_count(4)
@@ -229,3 +230,4 @@ def test_sponsor_cuts_table(phone, show):
     playwright.expect(table.locator("tbody tr").nth(1)).to_have_text("13:01–14:221m 21s—SponsorBlock")
     playwright.expect(table.locator("tbody tr").nth(2)).to_contain_text("Hims")
     playwright.expect(table.locator("tbody tr").last).to_have_text("50:00–50:1010sPromo · Other ShowTranscript")
+    playwright.expect(table.locator(".cuts-desc li")).to_have_text(["SPONSORS:", "- Acme: code SHOW"])

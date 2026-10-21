@@ -50,7 +50,7 @@ def test_ask_helper_writes_a_request_then_reads_the_answer():
     (ADS_DIR / "answers").mkdir(parents=True, exist_ok=True)
     (ADS_DIR / "answers" / "abc_123-XY.json").write_text(json.dumps(
         {"ok": True, "result": {"ads": [{"start": 0, "end": 5, "advertiser": "Acme", "confidence": "high"}]}}))
-    assert ads.ask_claude(TRANSCRIPT, "Show #1", "abc_123-XY") == [ads.Ad(start=0, end=5, advertiser="Acme",
+    assert ads.ask_claude(TRANSCRIPT, "Show #1", "abc_123-XY").ads == [ads.Ad(start=0, end=5, advertiser="Acme",
                                                                        confidence="high")]
     assert not any((ADS_DIR / "requests").iterdir()) and not any((ADS_DIR / "answers").iterdir())
 

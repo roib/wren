@@ -74,10 +74,10 @@ def test_held_back_until_the_delay_after_publishing(client, show, sponsorblock):
     assert json.loads(ep["sponsor_segments"]) == [[30, 45], [100, 160]]
     assert feed_titles(client) == ["Episode e1"]
     description = ET.fromstring(client.get("/feeds/test-show.xml").text).find("channel/item/description").text
-    assert description.startswith("Sponsor reads removed by Wren (1:15)")
+    assert description.startswith("Ads removed by Wren (1:15)")
     detail = client.get(f"/api/shows/{show['id']}/detail").json()
     assert detail["entries"][0]["sponsors"] == {
-        "state": "done", "removed": 75, "count": 2, "note": None,
+        "state": "done", "removed": 75, "count": 2, "note": None, "description_removed": [],
         "cuts": [{"start": 30, "end": 45, "source": "sponsorblock"}, {"start": 100, "end": 160, "source": "sponsorblock"}]}
 
     # Processed once: never looked at again.

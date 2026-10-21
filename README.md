@@ -81,9 +81,11 @@ It also helps with:
   - With Claude available, right after downloading: the ad reads Claude finds
     in a transcript made on the server with Whisper (sponsors, and promos for
     other shows or the publisher's own subscriptions; not the hosts' own
-    merchandise, tours or memberships; promos are labelled as such), together with any marked on
-    [SponsorBlock](https://sponsor.ajay.app) (so soon after publishing, it may
-    have only some of them). Claude is reached
+    merchandise, tours or memberships; promos are labelled as such), together
+    with any marked on [SponsorBlock](https://sponsor.ajay.app) (so soon after
+    publishing, it may have only some of them). The same kind of lines come out
+    of the episode's description, and YouTube chapter times in it are moved to
+    match the cut audio. Claude is reached
     with an API key (`ANTHROPIC_API_KEY`), or through a small helper on the
     host that runs `claude -p` with your Claude Code login (see
     [`host/`](host/README.md)).
