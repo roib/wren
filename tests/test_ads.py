@@ -225,4 +225,6 @@ def test_transcript_lines_follow_sentences():
 
 
 def test_prompt_counts_other_podcasts_promos():
-    assert "Promotions for other podcasts" in ads.RULES
+    # Including the publisher's own: its other podcasts and its subscriptions.
+    assert "Promotions for any other podcast" in ads.RULES and "network's or platform's own" in ads.RULES
+    assert "own paid products" in ads.RULES

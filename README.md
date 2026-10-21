@@ -79,7 +79,9 @@ It also helps with:
   its settings), cutting them out losslessly before an episode goes into its feed. Each episode is processed once and
   never changed after that.
   - With Claude available, right after downloading: the ad reads Claude finds
-    in a transcript made on the server with Whisper, together with any marked on
+    in a transcript made on the server with Whisper (sponsors, and promos for
+    other shows or the publisher's own subscriptions; not the hosts' own
+    merchandise, tours or memberships), together with any marked on
     [SponsorBlock](https://sponsor.ajay.app) (so soon after publishing, it may
     have only some of them). Claude is reached
     with an API key (`ANTHROPIC_API_KEY`), or through a small helper on the

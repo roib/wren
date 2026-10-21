@@ -32,12 +32,15 @@ third-party product or service the show is paid to promote. Typical signs: "brou
 by", "today's sponsor", promo codes, "go to example.com/showname", special offers, a switch from the
 conversation into a pitch and back.
 
-Promotions for other podcasts or shows, by other people or networks ("from iHeartRadio, listen to..."),
-count as ads too.
+These count as ads too, with "high" confidence when they're clearly a promo:
+- Promotions for any other podcast or show, including the same publisher's, network's or platform's own
+  ("from iHeartRadio, listen to...", a news outlet's trailer for its other podcasts).
+- Pitches for the publisher's, network's or platform's own paid products: a newspaper or magazine
+  subscription, an ad-free or premium podcast tier, an app, events.
 
-Do NOT count: the show's own merchandise, tours, live shows, Patreon or membership, other episodes or
-podcasts by the same people, social media, "like and subscribe"; or products discussed naturally as part
-of the conversation without being a paid pitch.
+Do NOT count: the hosts briefly mentioning their own merchandise, tours, live shows, Patreon or
+membership; other episodes of this same show; social media, "like and subscribe"; or products discussed
+naturally as part of the conversation without being a pitch.
 
 For each ad give "start" = the start time of its first line and "end" = the end time of its last line,
 in seconds, so that cutting [start, end] removes the whole ad and nothing else. Include the lead-in
