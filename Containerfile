@@ -1,8 +1,9 @@
 FROM docker.io/library/python:3.12-slim-bookworm
 
-# ffmpeg: merging, audio re-encode, thumbnails, cuts. A static build (two
-# files): Debian's package pulls in ~450 MB of GPU drivers and codecs Wren never uses.
-COPY --from=docker.io/mwader/static-ffmpeg:9.0.2-1 /ffmpeg /ffprobe /usr/local/bin/
+# ffmpeg: merging, audio re-encode, thumbnails
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
 # JS runtime yt-dlp uses to solve YouTube's player challenges
 COPY --from=docker.io/denoland/deno:bin-2.5.4 /deno /usr/local/bin/deno
