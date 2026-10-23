@@ -119,6 +119,11 @@ three-pane desktop layout.
 - **faster-whisper's own audio decoding (PyAV)** broke on a version mismatch;
   `transcribe.py` decodes with ffmpeg instead. Keep faster-whisper and
   anthropic pinned in the Containerfile, and the model baked into the image.
+  onnxruntime looks unused but isn't: it runs the voice filter (`vad_filter`).
+- **ffmpeg in the image is a static build** (two files, pinned), not Debian's
+  package, which pulled in ~450 MB of GPU drivers and codecs. Updating it means
+  running a download, an ad cut, chapters, a transcript and book cuts (M4B
+  with a cover, MP3, a chapter across files) in the new image first.
 - **One source per show.** A show follows YouTube *or* its podcast feed
   (`shows.kind`), never both: the two give different ids for the same episode
   and can't be matched reliably. Switching (`switch_source`) marks everything
